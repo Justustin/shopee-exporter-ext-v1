@@ -1,0 +1,8 @@
+*.csv
+*.xls
+*.xlsx
+node_modules/
+.env
+.DS_Store
+Thumbs.db
+.claude/
