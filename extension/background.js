@@ -2783,8 +2783,8 @@ function getOrderSortTimestamp(order) {
   return 0;
 }
 
-function buildExportRows() {
-  const orders = Object.values(capturedOrders)
+function getExportOrders() {
+  return Object.values(capturedOrders)
     .filter(isExportableOrder)
     .sort((left, right) => {
       const tsDiff = getOrderSortTimestamp(right) - getOrderSortTimestamp(left);
@@ -2793,6 +2793,9 @@ function buildExportRows() {
       const rightKey = String(firstPresent(right.order_id, right.order_sn, right.income_invoice_id, ''));
       return leftKey.localeCompare(rightKey);
     });
+}
+
+function buildExportRows(orders = getExportOrders()) {
   if (orders.length === 0) return [];
 
   const rows = [];
@@ -2860,6 +2863,88 @@ function buildExportRows() {
   return rows;
 }
 
+function sumOrderField(orders, field) {
+  return orders.reduce((sum, order) => sum + (toNumberOrNull(order?.[field]) || 0), 0);
+}
+
+function sumPreferredOrderFields(orders, fields) {
+  return orders.reduce((sum, order) => {
+    for (const field of fields) {
+      const value = toNumberOrNull(order?.[field]);
+      if (value === null) continue;
+      return sum + value;
+    }
+    return sum;
+  }, 0);
+}
+
+function buildExcelTotals(orders) {
+  if (!Array.isArray(orders) || orders.length === 0) {
+    return [];
+  }
+
+  return [
+    ['Invoice Totals', ''],
+    ['Total Orders', orders.length],
+    ['Total Quantity', sumOrderField(orders, 'total_quantity')],
+    ['Order Total (Rp)', sumPreferredOrderFields(orders, ['total_amount', 'order_total', 'order_income'])],
+    ['Refund Amount (Rp)', sumOrderField(orders, 'refund_amount')],
+    ['Admin Fee (Rp)', sumOrderField(orders, 'admin_fee')],
+    ['Service Fee (Rp)', sumOrderField(orders, 'service_fee')],
+    ['Transaction Fee (Rp)', sumOrderField(orders, 'transaction_fee')],
+    ['Shipping Fee (Rp)', sumOrderField(orders, 'shipping_fee')],
+    ['Shipping Fee Rebate (Rp)', sumOrderField(orders, 'shipping_fee_rebate')],
+    ['Buyer Shipping Fee (Rp)', sumOrderField(orders, 'buyer_shipping_fee')],
+    ['Shopee Shipping Rebate (Rp)', sumOrderField(orders, 'shopee_shipping_rebate')],
+    ['Voucher Shopee (Rp)', sumOrderField(orders, 'voucher_from_shopee')],
+    ['Voucher Seller (Rp)', sumOrderField(orders, 'voucher_from_seller')],
+    ['Coins (Rp)', sumOrderField(orders, 'coins')],
+    ['Order Income (Rp)', sumPreferredOrderFields(orders, ['order_income', 'net_income'])],
+    ['Net Income (Rp)', sumPreferredOrderFields(orders, ['net_income', 'order_income'])]
+  ];
+}
+
+function buildProductQuantitySummary(orders) {
+  const productMap = new Map();
+
+  for (const order of orders) {
+    if (!order || !Array.isArray(order.items)) continue;
+    for (const item of order.items) {
+      if (!item || typeof item !== 'object') continue;
+      const name = String(item.name || '-').trim() || '-';
+      const sku = String(item.sku || '').trim();
+      const orderedQty = toNumberOrNull(item.quantity) || 0;
+      const refundedQty = Math.max(toNumberOrNull(item.refund_qty) || 0, 0);
+      const soldQty = Math.max(orderedQty - refundedQty, 0);
+      const key = `${name}\u0000${sku}`;
+
+      if (!productMap.has(key)) {
+        productMap.set(key, {
+          name,
+          sku,
+          qtyOrdered: 0,
+          qtyRefunded: 0,
+          qtySold: 0
+        });
+      }
+
+      const entry = productMap.get(key);
+      entry.qtyOrdered += orderedQty;
+      entry.qtyRefunded += refundedQty;
+      entry.qtySold += soldQty;
+    }
+  }
+
+  return Array.from(productMap.values())
+    .sort((left, right) => {
+      const soldDiff = right.qtySold - left.qtySold;
+      if (soldDiff !== 0) return soldDiff;
+      const nameDiff = left.name.localeCompare(right.name);
+      if (nameDiff !== 0) return nameDiff;
+      return left.sku.localeCompare(right.sku);
+    });
+}
+
 function generateCSV() {
   const rows = buildExportRows();
   if (rows.length === 0) return '';
@@ -2890,8 +2975,11 @@ function escapeXml(value) {
 }
 
 function generateColoredExcelXml() {
-  const rows = buildExportRows();
+  const orders = getExportOrders();
+  const rows = buildExportRows(orders);
   if (rows.length === 0) return '';
+  const totals = buildExcelTotals(orders);
+  const productSummary = buildProductQuantitySummary(orders);
 
   const groupStyleMap = new Map();
   let useOdd = true;
@@ -2915,6 +3003,26 @@ function generateColoredExcelXml() {
     }).join('');
     return `<Row>${cells}</Row>`;
   }).join('');
+
+  const totalRowsXml = totals.map((row, index) => {
+    if (index === 0) {
+      return `<Row><Cell ss:StyleID="summaryHeader"><Data ss:Type="String">${escapeXml(row[0])}</Data></Cell></Row>`;
+    }
+    return `<Row><Cell ss:StyleID="summaryLabel"><Data ss:Type="String">${escapeXml(row[0])}</Data></Cell><Cell ss:StyleID="summaryValue"><Data ss:Type="String">${escapeXml(row[1])}</Data></Cell></Row>`;
+  }).join('');
+
+  const productSummaryHeader = ['Product Name', 'SKU/Variant', 'Qty Ordered', 'Qty Refunded', 'Qty Sold']
+    .map((header) => `<Cell ss:StyleID="header"><Data ss:Type="String">${escapeXml(header)}</Data></Cell>`)
+    .join('');
+  const productSummaryRowsXml = productSummary.map((row) => (
+    `<Row>` +
+      `<Cell ss:StyleID="summaryCell"><Data ss:Type="String">${escapeXml(row.name)}</Data></Cell>` +
+      `<Cell ss:StyleID="summaryCell"><Data ss:Type="String">${escapeXml(row.sku)}</Data></Cell>` +
+      `<Cell ss:StyleID="summaryCell"><Data ss:Type="String">${escapeXml(row.qtyOrdered)}</Data></Cell>` +
+      `<Cell ss:StyleID="summaryCell"><Data ss:Type="String">${escapeXml(row.qtyRefunded)}</Data></Cell>` +
+      `<Cell ss:StyleID="summaryCell"><Data ss:Type="String">${escapeXml(row.qtySold)}</Data></Cell>` +
+    `</Row>`
+  )).join('');
 
   return `<?xml version="1.0"?>
 <?mso-application progid="Excel.Sheet"?>
@@ -2952,11 +3060,53 @@ function generateColoredExcelXml() {
     <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
    </Borders>
   </Style>
+  <Style ss:ID="summaryHeader">
+   <Font ss:Bold="1" ss:Size="12"/>
+   <Interior ss:Color="#FCE4D6" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="summaryLabel">
+   <Font ss:Bold="1"/>
+   <Interior ss:Color="#F8CBAD" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="summaryValue">
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="summaryCell">
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+   </Borders>
+  </Style>
  </Styles>
  <Worksheet ss:Name="Shopee Export">
   <Table>
    <Row>${headerCells}</Row>
    ${dataRows}
+   <Row/>
+   ${totalRowsXml}
+   <Row/>
+   <Row><Cell ss:StyleID="summaryHeader"><Data ss:Type="String">Product Quantity Summary</Data></Cell></Row>
+   <Row>${productSummaryHeader}</Row>
+   ${productSummaryRowsXml}
   </Table>
  </Worksheet>
 </Workbook>`;
