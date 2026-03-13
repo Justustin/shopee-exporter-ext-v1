@@ -175,6 +175,14 @@ function saveToStorage() {
   }, 1000);
 }
 
+async function clearCapturedData() {
+  await waitForCurrentSync();
+  capturedOrders = {};
+  await chrome.storage.local.remove('capturedOrders');
+  updateBadge();
+  notifyPopup();
+}
+
 function initializeNetworkTemplateCapture() {
   if (!chrome.webRequest || !chrome.webRequest.onBeforeRequest) {
     console.warn('[Shopee Exporter] webRequest API unavailable for template capture');
@@ -374,12 +382,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'CLEAR_DATA') {
     (async () => {
-      await waitForCurrentSync();
-      capturedOrders = {};
-      await chrome.storage.local.remove('capturedOrders');
-      updateBadge();
-      notifyPopup();
+      await clearCapturedData();
       sendResponse({ ok: true });
+    })();
+  }
+
+  if (message.type === 'START_CAPTURE') {
+    (async () => {
+      try {
+        await clearCapturedData();
+        const hasSession = await hasSellerSession();
+        if (!hasSession) {
+          sendResponse({ ok: false, error: 'Log into Shopee Seller Centre first.' });
+          return;
+        }
+        await performScheduledSync('fresh-start');
+        sendResponse({ ok: true });
+      } catch (error) {
+        sendResponse({ ok: false, error: String(error?.message || error) });
+      }
     })();
   }
 

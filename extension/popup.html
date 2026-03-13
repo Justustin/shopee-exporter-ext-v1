@@ -2,72 +2,53 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Shopee Order Exporter</title>
+  <title>Shopee Exporter</title>
   <style>
     :root {
-      color-scheme: light;
-      --bg: #fffaf5;
+      --bg: #fff8f2;
       --panel: #ffffff;
-      --panel-alt: #fff2e8;
-      --border: #f1d6c3;
-      --text: #30231b;
-      --muted: #78665a;
+      --border: #f0d7c4;
       --brand: #ee4d2d;
       --brand-dark: #d63d1e;
-      --success: #18864b;
-      --success-bg: #e7f6ed;
-      --warning: #b06300;
-      --warning-bg: #fff3dd;
+      --text: #2f241d;
+      --muted: #756456;
+      --success: #1a7f45;
+      --success-bg: #e8f5ed;
+      --warning: #9a5b05;
+      --warning-bg: #fff2dd;
       --danger: #b3342b;
       --danger-bg: #fde9e7;
-      --blue: #1e88e5;
-      --blue-dark: #186fba;
-      --shadow: 0 10px 30px rgba(115, 60, 22, 0.08);
+      --shadow: 0 12px 32px rgba(124, 70, 29, 0.08);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      width: 390px;
+      width: 340px;
       padding: 16px;
-      font: 13px/1.45 "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-      background:
-        radial-gradient(circle at top left, rgba(238, 77, 45, 0.12), transparent 36%),
-        linear-gradient(180deg, #fffaf5 0%, #fff 100%);
+      font: 13px/1.45 "Segoe UI", Arial, sans-serif;
       color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(238, 77, 45, 0.11), transparent 34%),
+        linear-gradient(180deg, #fff8f2 0%, #fff 100%);
     }
 
-    .shell {
+    .stack {
       display: flex;
       flex-direction: column;
       gap: 12px;
     }
 
-    .hero, .card {
+    .card {
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 14px;
       box-shadow: var(--shadow);
-    }
-
-    .hero {
       padding: 14px;
-      background:
-        linear-gradient(135deg, rgba(238, 77, 45, 0.08), rgba(255, 211, 153, 0.14)),
-        var(--panel);
-    }
-
-    .hero-top {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: 10px;
-      margin-bottom: 10px;
     }
 
     h1 {
-      font-size: 17px;
-      line-height: 1.1;
+      font-size: 18px;
       color: var(--brand);
       margin-bottom: 4px;
     }
@@ -77,206 +58,123 @@
       font-size: 11px;
     }
 
-    .build {
-      font-size: 10px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-
-    .chip-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-
-    .chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 5px 9px;
-      border-radius: 999px;
-      font-size: 11px;
-      font-weight: 700;
-      letter-spacing: 0.01em;
-    }
-
-    .chip.success { background: var(--success-bg); color: var(--success); }
-    .chip.warning { background: var(--warning-bg); color: var(--warning); }
-    .chip.danger { background: var(--danger-bg); color: var(--danger); }
-    .chip.neutral { background: #f4efe9; color: var(--muted); }
-
-    .grid {
+    .summary {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 10px;
+      margin-top: 12px;
     }
 
-    .stat {
-      padding: 12px;
-      border-radius: 12px;
-      background: var(--panel-alt);
+    .metric {
+      background: #fff4eb;
       border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px;
     }
 
-    .stat-label {
+    .metric-label {
       font-size: 11px;
       color: var(--muted);
       margin-bottom: 4px;
     }
 
-    .stat-value {
+    .metric-value {
       font-size: 24px;
       font-weight: 800;
-      color: var(--brand);
       line-height: 1;
+      color: var(--brand);
     }
 
-    .card {
-      padding: 12px;
-    }
-
-    .section-title {
-      font-size: 12px;
-      font-weight: 800;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      color: var(--muted);
-      margin-bottom: 10px;
-    }
-
-    .meta-list {
-      display: grid;
-      gap: 8px;
-    }
-
-    .meta-row {
+    .status-row {
       display: flex;
       justify-content: space-between;
-      gap: 12px;
+      gap: 10px;
       align-items: center;
+      padding: 8px 0;
+      border-bottom: 1px solid #f5e2d5;
     }
 
-    .meta-key {
+    .status-row:last-child {
+      padding-bottom: 0;
+      border-bottom: none;
+    }
+
+    .status-label {
       color: var(--muted);
       font-size: 11px;
     }
 
-    .meta-value {
-      font-size: 12px;
-      font-weight: 600;
+    .status-value {
       text-align: right;
-      word-break: break-word;
-    }
-
-    .button-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-    }
-
-    .button-row {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-      margin-top: 8px;
-    }
-
-    button {
-      appearance: none;
-      border: none;
-      border-radius: 10px;
-      padding: 10px 12px;
       font-size: 12px;
-      font-weight: 800;
-      cursor: pointer;
-      transition: transform 0.12s ease, background 0.12s ease, opacity 0.12s ease;
-    }
-
-    button:hover:not(:disabled) { transform: translateY(-1px); }
-    button:disabled { cursor: not-allowed; opacity: 0.58; transform: none; }
-
-    .btn-brand { background: var(--brand); color: #fff; }
-    .btn-brand:hover:not(:disabled) { background: var(--brand-dark); }
-    .btn-blue { background: var(--blue); color: #fff; }
-    .btn-blue:hover:not(:disabled) { background: var(--blue-dark); }
-    .btn-soft { background: #f7f0ea; color: var(--text); border: 1px solid var(--border); }
-    .btn-soft:hover:not(:disabled) { background: #f2e8e0; }
-    .btn-ghost {
-      background: transparent;
-      color: var(--muted);
-      border: 1px dashed var(--border);
+      font-weight: 700;
     }
 
     .message {
       display: none;
       padding: 10px 12px;
-      border-radius: 10px;
+      border-radius: 12px;
       font-size: 12px;
-      font-weight: 600;
+      font-weight: 700;
     }
 
     .message.visible { display: block; }
     .message.info { background: #edf5ff; color: #1f5e9c; }
     .message.success { background: var(--success-bg); color: var(--success); }
+    .message.warning { background: var(--warning-bg); color: var(--warning); }
     .message.error { background: var(--danger-bg); color: var(--danger); }
 
-    .order-list {
-      max-height: 188px;
-      overflow-y: auto;
-      border: 1px solid var(--border);
+    button {
+      width: 100%;
+      border: none;
       border-radius: 12px;
-      background: #fffdfb;
+      padding: 11px 12px;
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+      transition: background 0.15s ease, opacity 0.15s ease;
     }
 
-    .order-empty {
-      padding: 18px 12px;
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
+    .btn-start {
+      background: var(--brand);
+      color: #fff;
+    }
+
+    .btn-start:hover:not(:disabled) {
+      background: var(--brand-dark);
+    }
+
+    .btn-excel {
+      background: #1e88e5;
+      color: #fff;
+    }
+
+    .btn-excel:hover:not(:disabled) {
+      background: #1976d2;
+    }
+
+    .btn-csv {
+      background: #f3eee9;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-csv:hover:not(:disabled) {
+      background: #ece5de;
+    }
+
+    .footer {
       color: var(--muted);
-      text-align: center;
-      font-size: 12px;
-    }
-
-    .order-item {
-      padding: 10px 12px;
-      border-bottom: 1px solid #f4e3d6;
-      display: grid;
-      gap: 2px;
-    }
-
-    .order-item:last-child { border-bottom: none; }
-
-    .order-top {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      align-items: center;
-    }
-
-    .order-id {
-      font-family: Consolas, monospace;
-      color: var(--brand);
       font-size: 11px;
-      font-weight: 700;
-    }
-
-    .order-income {
-      font-size: 11px;
-      font-weight: 700;
-      color: var(--success);
-    }
-
-    .order-meta {
-      color: var(--muted);
-      font-size: 11px;
-    }
-
-    .hint {
-      font-size: 11px;
-      color: var(--muted);
       line-height: 1.5;
     }
 
-    a.inline-link {
+    .footer a {
       color: var(--brand);
       text-decoration: none;
       font-weight: 700;
@@ -284,90 +182,47 @@
   </style>
 </head>
 <body>
-  <div class="shell">
-    <section class="hero">
-      <div class="hero-top">
-        <div>
-          <h1>Shopee Order Exporter</h1>
-          <div class="subtle">Capture invoice detail, then export when hydration is complete.</div>
-        </div>
-        <div class="build" id="buildTag">build</div>
-      </div>
-      <div class="chip-row">
-        <div class="chip neutral" id="captureState">Checking session</div>
-        <div class="chip neutral" id="monitorState">Monitor idle</div>
-      </div>
-    </section>
-
-    <section class="grid">
-      <div class="stat">
-        <div class="stat-label">Captured Orders</div>
-        <div class="stat-value" id="orderCount">0</div>
-      </div>
-      <div class="stat">
-        <div class="stat-label">Pending Hydration</div>
-        <div class="stat-value" id="pendingCount">0</div>
-      </div>
-    </section>
-
+  <div class="stack">
     <section class="card">
-      <div class="section-title">Status</div>
-      <div class="meta-list">
-        <div class="meta-row">
-          <div class="meta-key">Last sync</div>
-          <div class="meta-value" id="lastSyncValue">Never</div>
+      <h1>Shopee Exporter</h1>
+      <div class="subtle">Click Start. Wait until status says Ready. Then export.</div>
+      <div class="summary">
+        <div class="metric">
+          <div class="metric-label">Captured</div>
+          <div class="metric-value" id="orderCount">0</div>
         </div>
-        <div class="meta-row">
-          <div class="meta-key">Method</div>
-          <div class="meta-value" id="lastMethodValue">-</div>
-        </div>
-        <div class="meta-row">
-          <div class="meta-key">Shopee profile</div>
-          <div class="meta-value" id="profileValue">-</div>
-        </div>
-        <div class="meta-row">
-          <div class="meta-key">Export filename</div>
-          <div class="meta-value" id="filenamePreview">shopee-export-YYYY-MM-DD</div>
+        <div class="metric">
+          <div class="metric-label">Waiting</div>
+          <div class="metric-value" id="pendingCount">0</div>
         </div>
       </div>
     </section>
 
     <section class="card">
-      <div class="section-title">Actions</div>
-      <div class="button-grid">
-        <button class="btn-brand" id="btnSyncNow">Sync Now</button>
-        <button class="btn-soft" id="btnHiddenSync">Warm Income Pages</button>
+      <div class="status-row">
+        <div class="status-label">Status</div>
+        <div class="status-value" id="statusText">Idle</div>
       </div>
-      <div class="button-row">
-        <button class="btn-blue" id="btnExportExcel" disabled>Export Excel</button>
-        <button class="btn-soft" id="btnExportCSV" disabled>Export CSV</button>
+      <div class="status-row">
+        <div class="status-label">Last run</div>
+        <div class="status-value" id="lastRunText">Never</div>
       </div>
-      <div class="button-row">
-        <button class="btn-soft" id="btnMonitorToggle">Start Monitor</button>
-        <button class="btn-soft" id="btnOpenSeller">Open Seller Centre</button>
-      </div>
-      <div class="button-row">
-        <button class="btn-ghost" id="btnSettings">Settings</button>
-        <button class="btn-ghost" id="btnClear">Clear Data</button>
+      <div class="status-row">
+        <div class="status-label">File name</div>
+        <div class="status-value" id="fileNameText">shopee-export-YYYY-MM-DD.xls</div>
       </div>
     </section>
 
     <div class="message" id="messageBox"></div>
 
-    <section class="card">
-      <div class="section-title">Recent Orders</div>
-      <div class="order-list" id="orderList">
-        <div class="order-empty">No orders captured yet.</div>
-      </div>
-    </section>
+    <button class="btn-start" id="btnStart">Start</button>
+    <button class="btn-excel" id="btnExportExcel" disabled>Export Excel</button>
+    <button class="btn-csv" id="btnExportCSV" disabled>Export CSV</button>
 
-    <section class="card">
-      <div class="section-title">Workflow</div>
-      <div class="hint">
-        Use <strong>Sync Now</strong> after logging into Seller Centre. Export stays disabled until pending invoices reach zero. 
-        If Shopee misses some invoice detail, use <strong>Warm Income Pages</strong> or keep the monitor running.
-        Fine-tune filenames and post-export behavior in <a class="inline-link" href="#" id="settingsLink">Settings</a>.
-      </div>
+    <section class="card footer">
+      This popup clears old data and runs a fresh sync when you press <strong>Start</strong>.
+      <br><br>
+      Need different export names? <a href="#" id="settingsLink">Open settings</a>
     </section>
   </div>
 
