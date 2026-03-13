@@ -1,6 +1,5 @@
 // Background service worker: always-on capture with persistent storage.
 
-const SYNC_INTERVAL_MINUTES = 30;
 const INCOME_LIST_URL = 'https://seller.shopee.co.id/portal/finance/income?type=2&dateRange=THIS_WEEK';
 const MONITOR_ALARM_INTERVAL_MINUTES = 2;
 const MONITOR_URLS = [
@@ -121,26 +120,19 @@ chrome.identity.getProfileUserInfo((info) => {
 // In-memory cache (restored from storage on wake)
 let capturedOrders = {};
 
-initializeSyncAlarms();
 initializeNetworkTemplateCapture();
 console.log(`[Shopee Exporter] build=${BUILD_TAG} groups=${SYNC_ENDPOINT_GROUPS.map((group) => group.name).join('|')}`);
-performScheduledSync('startup');
+chrome.alarms.clear('shopeePullSync');
 
 chrome.storage.local.get('monitorEnabled', (result) => {
-  monitorEnabled = Boolean(result.monitorEnabled);
+  monitorEnabled = false;
   syncMonitorAlarm();
-  if (monitorEnabled) {
-    runMonitorTick('startup-enabled');
+  if (result.monitorEnabled) {
+    chrome.storage.local.set({ monitorEnabled: false });
   }
 });
 
-chrome.runtime.onInstalled.addListener(initializeSyncAlarms);
-chrome.runtime.onStartup.addListener(initializeSyncAlarms);
-
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'shopeePullSync') {
-    performScheduledSync('alarm');
-  }
   if (alarm.name === 'shopeeMonitorTick' && monitorEnabled) {
     runMonitorTick('alarm');
   }
@@ -2764,11 +2756,6 @@ function generateColoredExcelXml() {
   </Table>
  </Worksheet>
 </Workbook>`;
-}
-
-function initializeSyncAlarms() {
-  ensureAlarm('shopeePullSync', SYNC_INTERVAL_MINUTES, 60000);
-  syncMonitorAlarm();
 }
 
 function syncMonitorAlarm() {

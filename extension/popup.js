@@ -39,13 +39,13 @@ elements.btnStart.addEventListener('click', async () => {
     return;
   }
 
-  if (snapshot.status && snapshot.status.orderCount > 0 && snapshot.status.readyToExport) {
-    setMessage('success', 'Sync finished. Export is ready.');
+  if (snapshot.status && snapshot.status.orderCount > 0 && (snapshot.status.pendingHydrationCount || 0) > 0) {
+    setMessage('warning', `Sync finished. Export is available, but ${snapshot.status.pendingHydrationCount || 0} invoice(s) may still be incomplete.`);
     return;
   }
 
   if (snapshot.status && snapshot.status.orderCount > 0) {
-    setMessage('warning', `Sync finished, but ${snapshot.status.pendingHydrationCount || 0} invoice(s) are still being prepared.`);
+    setMessage('success', 'Sync finished. Export is ready.');
     return;
   }
 
@@ -103,7 +103,7 @@ async function refreshStatus() {
   elements.lastRunText.textContent = formatTimestamp(snapshot.lastSyncMeta?.ts);
   elements.fileNameText.textContent = buildFilename('excel');
 
-  const disableExport = status.syncInFlight || !status.readyToExport || (status.orderCount || 0) === 0;
+  const disableExport = status.syncInFlight || (status.orderCount || 0) === 0;
   elements.btnExportExcel.disabled = disableExport;
   elements.btnExportCSV.disabled = disableExport;
   elements.btnStart.disabled = Boolean(status.syncInFlight);
@@ -113,16 +113,12 @@ async function refreshStatus() {
 async function exportData(kind) {
   setMessage('info', kind === 'excel' ? 'Preparing Excel export...' : 'Preparing CSV export...');
   const response = await sendMessage({
-    type: kind === 'excel' ? 'EXPORT_EXCEL_COLORED' : 'EXPORT_CSV',
-    requireReady: true
+    type: kind === 'excel' ? 'EXPORT_EXCEL_COLORED' : 'EXPORT_CSV'
   });
   await refreshStatus();
 
   if (!response || !response.ok) {
-    const pending = response?.pendingHydrationCount ?? snapshot.status?.pendingHydrationCount ?? 0;
-    setMessage('warning', pending > 0
-      ? `Export is still locked. ${pending} invoice(s) are still being prepared.`
-      : 'Export is not ready yet. Press Start again after Shopee finishes loading data.');
+    setMessage('warning', 'Export failed. Press Start again after Shopee finishes loading data.');
     return;
   }
 
@@ -146,6 +142,12 @@ async function exportData(kind) {
     await refreshStatus();
   }
 
+  const pending = snapshot.status?.pendingHydrationCount || 0;
+  if (pending > 0) {
+    setMessage('warning', `${kind === 'excel' ? 'Excel' : 'CSV'} downloaded. ${pending} invoice(s) may still be incomplete.`);
+    return;
+  }
+
   setMessage('success', kind === 'excel' ? 'Excel downloaded.' : 'CSV downloaded.');
 }
 
@@ -156,11 +158,10 @@ function deriveStatusText(status) {
   if ((status.orderCount || 0) === 0) {
     return 'Idle';
   }
-  if (status.readyToExport) {
-    return 'Ready';
+  if ((status.pendingHydrationCount || 0) > 0) {
+    return 'Export available';
   }
-  const pending = status.pendingHydrationCount || 0;
-  return `Preparing ${pending}`;
+  return 'Ready';
 }
 
 function buildFilename(kind) {
