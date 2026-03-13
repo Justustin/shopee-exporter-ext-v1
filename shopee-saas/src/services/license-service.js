@@ -18,6 +18,43 @@ function normalizeLicenseKey(value) {
     .replace(/[^A-Z0-9-]/g, '');
 }
 
+function normalizeStoreNameValue(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isGenericStoreName(value) {
+  const normalized = normalizeStoreNameValue(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  if (!normalized) return false;
+  return [
+    'shopee seller centre',
+    'shopee seller center',
+    'seller centre',
+    'seller center',
+    'shopee'
+  ].includes(normalized);
+}
+
+function isGenericStoreKey(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized.startsWith('name:')) return false;
+  return [
+    'name:shopee-seller-centre',
+    'name:shopee-seller-center',
+    'name:seller-centre',
+    'name:seller-center',
+    'name:shopee'
+  ].includes(normalized);
+}
+
+function isPlaceholderStoreIdentity({ storeKey = '', storeName = '' } = {}) {
+  return isGenericStoreKey(storeKey) || isGenericStoreName(storeName);
+}
+
 function hashLicenseKey(licenseKey) {
   return crypto
     .createHmac('sha256', config.license.pepper)
@@ -31,11 +68,18 @@ function createReadableKey() {
 }
 
 function normalizeStoreIdentity({ storeKey = '', storeName = '' } = {}) {
-  const normalizedName = String(storeName || '').trim();
-  const normalizedKey = String(storeKey || '').trim();
+  const normalizedName = normalizeStoreNameValue(storeName);
+  const sanitizedName = isGenericStoreName(normalizedName) ? '' : normalizedName;
+  let normalizedKey = String(storeKey || '').trim();
+  if (isGenericStoreKey(normalizedKey)) {
+    normalizedKey = '';
+  }
+  if (!normalizedKey && sanitizedName) {
+    normalizedKey = `name:${sanitizedName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`;
+  }
   return {
     storeKey: normalizedKey,
-    storeName: normalizedName,
+    storeName: sanitizedName,
   };
 }
 
@@ -113,27 +157,47 @@ async function verifyLicense({ licenseKey, storeKey = '', storeName = '', meta =
 
     const existingStore = boundStores.find((store) => store.store_key === storeIdentity.storeKey);
     if (!existingStore) {
-      const maxStores = license.max_stores || 1;
-      if (boundStores.length >= maxStores) {
-        return {
-          ok: false,
-          code: 'STORE_LIMIT_REACHED',
-          error: `License already used on ${boundStores.length}/${maxStores} store(s)`,
-          license: sanitizeLicenseRecord(license, boundStores),
-        };
-      }
+      const placeholderStore = boundStores.find((store) => isPlaceholderStoreIdentity({
+        storeKey: store.store_key,
+        storeName: store.store_name,
+      }));
 
-      await trx('license_stores').insert({
-        license_id: license.id,
-        store_key: storeIdentity.storeKey,
-        store_name: storeIdentity.storeName || null,
-        first_verified_at: trx.fn.now(),
-        last_verified_at: trx.fn.now(),
-        metadata: {
-          lastSeenBuildTag: meta.buildTag || '',
-          lastSeenProfileEmail: meta.profileEmail || '',
-        },
-      });
+      if (placeholderStore) {
+        await trx('license_stores')
+          .where({ id: placeholderStore.id })
+          .update({
+            store_key: storeIdentity.storeKey,
+            store_name: storeIdentity.storeName || null,
+            last_verified_at: trx.fn.now(),
+            updated_at: trx.fn.now(),
+            metadata: {
+              lastSeenBuildTag: meta.buildTag || '',
+              lastSeenProfileEmail: meta.profileEmail || '',
+            },
+          });
+      } else {
+        const maxStores = license.max_stores || 1;
+        if (boundStores.length >= maxStores) {
+          return {
+            ok: false,
+            code: 'STORE_LIMIT_REACHED',
+            error: `License already used on ${boundStores.length}/${maxStores} store(s)`,
+            license: sanitizeLicenseRecord(license, boundStores),
+          };
+        }
+
+        await trx('license_stores').insert({
+          license_id: license.id,
+          store_key: storeIdentity.storeKey,
+          store_name: storeIdentity.storeName || null,
+          first_verified_at: trx.fn.now(),
+          last_verified_at: trx.fn.now(),
+          metadata: {
+            lastSeenBuildTag: meta.buildTag || '',
+            lastSeenProfileEmail: meta.profileEmail || '',
+          },
+        });
+      }
     } else {
       await trx('license_stores')
         .where({ id: existingStore.id })

@@ -12,7 +12,7 @@ const LICENSE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const LICENSE_OFFLINE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_LICENSE_API_BASE_URL = 'http://localhost:3000';
 const SELLER_CDS_VER = '2';
-const BUILD_TAG = '2026-03-13-b';
+const BUILD_TAG = '2026-03-13-c';
 const INVOICE_LIST_URL_FILTER = '*://seller.shopee.co.id/api/v4/invoice/seller/get_invoice_list*';
 const INCOME_REPORT_LIST_URL = 'https://seller.shopee.co.id/api/v4/accounting/pc/seller_income/income_report/get_income_report_list';
 const ACCOUNTING_INCOME_DETAIL_URL = 'https://seller.shopee.co.id/api/v4/accounting/pc/seller_income/income_overview/get_income_detail';
@@ -210,13 +210,97 @@ function createDefaultStoreContext(overrides = {}) {
   }, overrides || {});
 }
 
+function normalizeStoreNameValue(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isGenericStoreName(value) {
+  const normalized = normalizeStoreNameValue(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  if (!normalized) return false;
+  return [
+    'shopee seller centre',
+    'shopee seller center',
+    'seller centre',
+    'seller center',
+    'shopee'
+  ].includes(normalized);
+}
+
+function sanitizeStoreName(value) {
+  const cleaned = normalizeStoreNameValue(value);
+  return isGenericStoreName(cleaned) ? '' : cleaned;
+}
+
+function isGenericStoreKey(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized.startsWith('name:')) return false;
+  return [
+    'name:shopee-seller-centre',
+    'name:shopee-seller-center',
+    'name:seller-centre',
+    'name:seller-center',
+    'name:shopee'
+  ].includes(normalized);
+}
+
 function normalizeStoreContext(raw) {
+  const storeName = sanitizeStoreName(raw?.storeName || '');
+  let storeKey = String(raw?.storeKey || '').trim();
+  if (isGenericStoreKey(storeKey)) {
+    storeKey = '';
+  }
+  if (!storeKey && storeName) {
+    storeKey = buildStoreKey('', storeName);
+  }
   return createDefaultStoreContext({
-    storeKey: String(raw?.storeKey || '').trim(),
-    storeName: String(raw?.storeName || '').trim(),
+    storeKey,
+    storeName,
     source: String(raw?.source || '').trim(),
     detectedAt: toNumberOrNull(raw?.detectedAt) || 0
   });
+}
+
+function getStoreContextScore(raw) {
+  const context = normalizeStoreContext(raw);
+  if (!context.storeKey) return 0;
+
+  let score = context.storeKey.startsWith('shop:') ? 40 : 20;
+  if (context.source === 'shop_id' || context.source === 'shop_name') {
+    score += 10;
+  } else if (context.source.startsWith('order_')) {
+    score += 5;
+  } else if (context.source === 'captured_orders') {
+    score += 4;
+  }
+  if (context.storeName) {
+    score += 1;
+  }
+  return score;
+}
+
+function choosePreferredStoreContext(...contexts) {
+  let best = createDefaultStoreContext();
+  let bestScore = 0;
+
+  for (const candidate of contexts) {
+    const normalized = normalizeStoreContext(candidate);
+    const score = getStoreContextScore(normalized);
+    if (!score) continue;
+    if (
+      score > bestScore ||
+      (score === bestScore && (normalized.detectedAt || 0) > (best.detectedAt || 0))
+    ) {
+      best = normalized;
+      bestScore = score;
+    }
+  }
+
+  return bestScore ? best : createDefaultStoreContext();
 }
 
 function normalizeLicenseApiBaseUrl(value) {
@@ -303,8 +387,7 @@ function buildStoreKey(shopId, shopName) {
   if (normalizedShopId) {
     return `shop:${normalizedShopId}`;
   }
-  const normalizedName = String(shopName || '')
-    .trim()
+  const normalizedName = sanitizeStoreName(shopName)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
@@ -315,7 +398,7 @@ function buildStoreKey(shopId, shopName) {
 }
 
 function deriveStoreContextFromOrder(order) {
-  const shopName = String(order?.shop_name || '').trim();
+  const shopName = sanitizeStoreName(order?.shop_name || '');
   const shopId = firstPresent(order?.shop_id, order?.store_id, order?.seller_id, '');
   const storeKey = buildStoreKey(shopId, shopName);
   if (!storeKey) return null;
@@ -361,7 +444,7 @@ function inferStoreContextFromCapturedOrders() {
 
 async function updateCurrentStoreContext(nextContext) {
   const normalized = normalizeStoreContext(nextContext);
-  if (!normalized.storeKey) return currentStoreContext;
+  if (!normalized.storeKey) return normalizeStoreContext(currentStoreContext);
   if (
     normalized.storeKey === currentStoreContext.storeKey &&
     normalized.storeName === currentStoreContext.storeName &&
@@ -378,6 +461,13 @@ async function updateCurrentStoreContext(nextContext) {
   currentStoreContext = normalized;
   await saveStoreContext();
   return currentStoreContext;
+}
+
+function getBestKnownStoreContext() {
+  return choosePreferredStoreContext(
+    currentStoreContext,
+    inferStoreContextFromCapturedOrders()
+  );
 }
 
 function normalizeLicenseKey(value) {
@@ -735,6 +825,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === 'GET_STATUS') {
     const remainingInvoiceCount = getPendingHydrationCount();
+    const bestStoreContext = getBestKnownStoreContext();
     for (const order of Object.values(capturedOrders)) {
       applyOrderGuards(order);
     }
@@ -748,7 +839,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       buildTag: BUILD_TAG,
       profileEmail: profileInfo.email || '',
       license: getPublicLicenseState(),
-      storeContext: normalizeStoreContext(currentStoreContext)
+      storeContext: bestStoreContext
     });
   }
 
@@ -5011,16 +5102,15 @@ async function findSellerTabForRefresh() {
 
 async function detectActiveStoreContext() {
   const tab = await findSellerTabForRefresh();
+  let fromTab = null;
   if (tab && typeof tab.id === 'number') {
-    const fromTab = await requestStoreContext(tab.id);
-    if (fromTab.storeKey) {
-      return updateCurrentStoreContext(fromTab);
-    }
+    fromTab = await requestStoreContext(tab.id);
   }
 
   const fromOrders = inferStoreContextFromCapturedOrders();
-  if (fromOrders) {
-    return updateCurrentStoreContext(fromOrders);
+  const preferred = choosePreferredStoreContext(fromTab, fromOrders, currentStoreContext);
+  if (preferred.storeKey) {
+    return updateCurrentStoreContext(preferred);
   }
 
   return normalizeStoreContext(currentStoreContext);

@@ -110,12 +110,12 @@ function extractStoreContextFromDom() {
     /"shopid"\s*:\s*"?(\d{5,20})"?/i
   ]);
 
-  const shopName = cleanupStoreName(matchFirst(haystack, [
+  const shopName = sanitizeStoreName(matchFirst(haystack, [
     /"shop_name"\s*:\s*"([^"]{1,200})"/i,
     /"shopName"\s*:\s*"([^"]{1,200})"/i,
     /"seller_name"\s*:\s*"([^"]{1,200})"/i,
     /"sellerName"\s*:\s*"([^"]{1,200})"/i
-  ])) || cleanupStoreName(extractStoreNameFromTitle(title));
+  ])) || sanitizeStoreName(extractStoreNameFromTitle(title));
 
   if (shopId) {
     return {
@@ -163,9 +163,10 @@ function extractStoreNameFromTitle(title) {
   for (const part of parts) {
     if (/shopee seller/i.test(part)) continue;
     if (/seller centre|seller center/i.test(part)) continue;
+    if (isGenericStoreName(part)) continue;
     return part;
   }
-  return cleaned;
+  return isGenericStoreName(cleaned) ? '' : cleaned;
 }
 
 function cleanupStoreName(value) {
@@ -174,8 +175,28 @@ function cleanupStoreName(value) {
     .trim();
 }
 
+function sanitizeStoreName(value) {
+  const cleaned = cleanupStoreName(value);
+  return isGenericStoreName(cleaned) ? '' : cleaned;
+}
+
+function isGenericStoreName(value) {
+  const normalized = cleanupStoreName(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  if (!normalized) return false;
+  return [
+    'shopee seller centre',
+    'shopee seller center',
+    'seller centre',
+    'seller center',
+    'shopee'
+  ].includes(normalized);
+}
+
 function normalizeStoreNameKey(value) {
-  return cleanupStoreName(value)
+  return sanitizeStoreName(value)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
