@@ -10,7 +10,7 @@ const MONITOR_URLS = [
 const HIDDEN_INVOICE_VISIT_LIMIT = 12;
 const HIDDEN_PAGE_SETTLE_MS = 2500;
 const SELLER_CDS_VER = '2';
-const BUILD_TAG = '2026-03-08-ag';
+const BUILD_TAG = '2026-03-13-a';
 const INVOICE_LIST_URL_FILTER = '*://seller.shopee.co.id/api/v4/invoice/seller/get_invoice_list*';
 const INCOME_REPORT_LIST_URL = 'https://seller.shopee.co.id/api/v4/accounting/pc/seller_income/income_report/get_income_report_list';
 const ACCOUNTING_INCOME_DETAIL_URL = 'https://seller.shopee.co.id/api/v4/accounting/pc/seller_income/income_overview/get_income_detail';
@@ -366,7 +366,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       orders: capturedOrders,
       syncInFlight,
       pendingHydrationCount: getPendingHydrationCount(),
-      readyToExport: canExportCsvNow()
+      readyToExport: canExportCsvNow(),
+      buildTag: BUILD_TAG,
+      profileEmail: profileInfo.email || ''
     });
   }
 

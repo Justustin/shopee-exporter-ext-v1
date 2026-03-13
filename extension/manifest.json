@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Shopee Order Exporter",
-  "version": "1.0.0",
-  "description": "Intercepts Shopee Seller Centre API calls to export detailed order/invoice data including admin fees, shipping, and product quantities.",
+  "version": "1.1.0",
+  "description": "Captures Shopee Seller Centre invoice and income data, then exports detailed per-order fee breakdowns to CSV or colored Excel.",
   "permissions": [
     "storage",
     "activeTab",
@@ -29,6 +29,7 @@
     "default_popup": "popup.html",
     "default_title": "Shopee Order Exporter"
   },
+  "options_page": "options.html",
   "web_accessible_resources": [
     {
       "resources": ["interceptor.js"],
