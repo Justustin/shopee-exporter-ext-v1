@@ -2946,6 +2946,202 @@ function buildProductQuantitySummary(orders) {
     });
 }
 
+const EXCEL_CURRENCY_HEADERS = new Set([
+  'Unit Price',
+  'Product Subtotal',
+  'Order Total (Rp)',
+  'Refund Amount (Rp)',
+  'Admin Fee (Rp)',
+  'Service Fee (Rp)',
+  'Transaction Fee (Rp)',
+  'Shipping Fee (Rp)',
+  'Shipping Fee Rebate (Rp)',
+  'Buyer Shipping Fee (Rp)',
+  'Shopee Shipping Rebate (Rp)',
+  'Voucher Shopee (Rp)',
+  'Voucher Seller (Rp)',
+  'Coins (Rp)',
+  'Order Income (Rp)',
+  'Net Income (Rp)'
+]);
+
+const EXCEL_INTEGER_HEADERS = new Set([
+  'Quantity',
+  'Refund Qty',
+  'Total Quantity'
+]);
+
+const EXCEL_COLUMN_WIDTHS = {
+  'Order ID': 95,
+  'Order SN': 95,
+  'Income Invoice ID': 95,
+  'Buyer Name': 110,
+  'Order Status': 70,
+  'Created': 110,
+  'Order Date': 80,
+  'Payment Method': 105,
+  'Product Name': 280,
+  'SKU/Variant': 120,
+  'Quantity': 65,
+  'Unit Price': 75,
+  'Product Subtotal': 85,
+  'Refund Status': 95,
+  'Refund Qty': 65,
+  'Item Details': 260,
+  'Total Quantity': 70,
+  'Order Total (Rp)': 90,
+  'Refund Amount (Rp)': 90,
+  'Admin Fee (Rp)': 85,
+  'Service Fee (Rp)': 85,
+  'Transaction Fee (Rp)': 90,
+  'Shipping Fee (Rp)': 85,
+  'Shipping Fee Rebate (Rp)': 95,
+  'Buyer Shipping Fee (Rp)': 95,
+  'Shopee Shipping Rebate (Rp)': 105,
+  'Voucher Shopee (Rp)': 90,
+  'Voucher Seller (Rp)': 90,
+  'Coins (Rp)': 75,
+  'Order Income (Rp)': 90,
+  'Net Income (Rp)': 90
+};
+
+function formatDisplayInteger(value) {
+  const numeric = toNumberOrNull(value);
+  if (numeric === null) return '';
+  return numeric.toLocaleString('id-ID');
+}
+
+function buildItemCellValue(items, mapValue, options = {}) {
+  const list = Array.isArray(items) && items.length > 0
+    ? items
+    : [{ name: '', sku: '', quantity: '', unit_price: '', subtotal: '', refund_status: '', refund_qty: '' }];
+  const lines = list.map((item, index) => mapValue(item, index, list.length));
+
+  if (list.length === 1) {
+    return lines[0];
+  }
+
+  return lines
+    .map((value, index) => {
+      if (options.numbered) {
+        return `${index + 1}. ${value ?? ''}`;
+      }
+      return value ?? '';
+    })
+    .join('\n');
+}
+
+function buildExcelInvoiceRows(orders) {
+  return orders.map((order, index) => {
+    applyOrderGuards(order);
+    const items = Array.isArray(order.items) && order.items.length > 0
+      ? order.items
+      : [{ name: '', sku: '', quantity: '', unit_price: '', subtotal: '', refund_status: '', refund_qty: '' }];
+    const multilineItemDetails = items.map((item) => {
+      const name = item.name || '-';
+      const sku = item.sku ? ` [${item.sku}]` : '';
+      const qty = formatDisplayInteger(item.quantity);
+      const price = formatDisplayInteger(item.unit_price);
+      const subtotal = formatDisplayInteger(item.subtotal);
+      const refundStatus = item.refund_status || '';
+      const refundQty = refundStatus ? formatDisplayInteger(item.refund_qty) : '';
+      const refundSuffix = refundStatus
+        ? ` | ${refundStatus}${refundQty ? ` x${refundQty}` : ''}`
+        : '';
+      return `${name}${sku} x${qty || 0} @${price || 0} = ${subtotal || 0}${refundSuffix}`;
+    }).join('\n');
+
+    const createdText = order.create_time || '';
+
+    return {
+      __rowVariant: index % 2 === 0 ? 'Odd' : 'Even',
+      'Order ID': order.order_id || '',
+      'Order SN': order.order_sn || '',
+      'Income Invoice ID': order.income_invoice_id || '',
+      'Buyer Name': order.buyer_name || '',
+      'Order Status': order.order_status || '',
+      'Created': createdText,
+      'Order Date': extractOrderDateText(createdText),
+      'Payment Method': order.payment_method || '',
+      'Product Name': buildItemCellValue(items, (item) => item.name || '-', { numbered: true }),
+      'SKU/Variant': buildItemCellValue(items, (item) => item.sku || ''),
+      'Quantity': items.length === 1
+        ? (toNumberOrNull(items[0].quantity) ?? '')
+        : buildItemCellValue(items, (item) => formatDisplayInteger(item.quantity)),
+      'Unit Price': items.length === 1
+        ? (toNumberOrNull(items[0].unit_price) ?? '')
+        : buildItemCellValue(items, (item) => formatDisplayInteger(item.unit_price)),
+      'Product Subtotal': items.length === 1
+        ? (toNumberOrNull(items[0].subtotal) ?? '')
+        : buildItemCellValue(items, (item) => formatDisplayInteger(item.subtotal)),
+      'Refund Status': buildItemCellValue(items, (item) => item.refund_status || ''),
+      'Refund Qty': items.length === 1
+        ? (items[0].refund_status ? (toNumberOrNull(items[0].refund_qty) ?? '') : '')
+        : buildItemCellValue(items, (item) => item.refund_status ? formatDisplayInteger(item.refund_qty) : ''),
+      'Item Details': multilineItemDetails,
+      'Total Quantity': toNumberOrNull(order.total_quantity) ?? '',
+      'Order Total (Rp)': toNumberOrNull(firstPresent(order.total_amount, order.order_total, order.order_income)) ?? '',
+      'Refund Amount (Rp)': toNumberOrNull(order.refund_amount) ?? '',
+      'Admin Fee (Rp)': toNumberOrNull(order.admin_fee) ?? '',
+      'Service Fee (Rp)': toNumberOrNull(order.service_fee) ?? '',
+      'Transaction Fee (Rp)': toNumberOrNull(order.transaction_fee) ?? '',
+      'Shipping Fee (Rp)': toNumberOrNull(order.shipping_fee) ?? '',
+      'Shipping Fee Rebate (Rp)': toNumberOrNull(order.shipping_fee_rebate) ?? '',
+      'Buyer Shipping Fee (Rp)': toNumberOrNull(order.buyer_shipping_fee) ?? '',
+      'Shopee Shipping Rebate (Rp)': toNumberOrNull(order.shopee_shipping_rebate) ?? '',
+      'Voucher Shopee (Rp)': toNumberOrNull(order.voucher_from_shopee) ?? '',
+      'Voucher Seller (Rp)': toNumberOrNull(order.voucher_from_seller) ?? '',
+      'Coins (Rp)': toNumberOrNull(order.coins) ?? '',
+      'Order Income (Rp)': toNumberOrNull(firstPresent(order.order_income, order.net_income)) ?? '',
+      'Net Income (Rp)': toNumberOrNull(firstPresent(order.net_income, order.order_income)) ?? ''
+    };
+  });
+}
+
+function buildSpreadsheetCell(value, styleId, type = 'String') {
+  const normalizedType = type === 'Number' ? 'Number' : 'String';
+  const normalizedValue = normalizedType === 'Number'
+    ? String(Number(value || 0))
+    : String(value ?? '');
+  return `<Cell ss:StyleID="${styleId}"><Data ss:Type="${normalizedType}">${escapeXml(normalizedValue)}</Data></Cell>`;
+}
+
+function buildInvoiceSpreadsheetCell(header, value, rowVariant) {
+  const prefix = rowVariant === 'Even' ? 'invoiceEven' : 'invoiceOdd';
+
+  if (value === '' || value === null || value === undefined) {
+    return buildSpreadsheetCell('', `${prefix}Text`, 'String');
+  }
+
+  const numericValue = toNumberOrNull(value);
+  const isMultiline = typeof value === 'string' && value.includes('\n');
+
+  if (isMultiline) {
+    return buildSpreadsheetCell(value, `${prefix}Wrap`, 'String');
+  }
+
+  if (numericValue !== null && EXCEL_CURRENCY_HEADERS.has(header)) {
+    return buildSpreadsheetCell(numericValue, `${prefix}Currency`, 'Number');
+  }
+
+  if (numericValue !== null && EXCEL_INTEGER_HEADERS.has(header)) {
+    return buildSpreadsheetCell(numericValue, `${prefix}Integer`, 'Number');
+  }
+
+  return buildSpreadsheetCell(value, `${prefix}Text`, 'String');
+}
+
+function buildSummarySpreadsheetCell(label, value) {
+  const numericValue = toNumberOrNull(value);
+  if (numericValue === null) {
+    return buildSpreadsheetCell(value, 'summaryValue', 'String');
+  }
+  if (label.includes('(Rp)')) {
+    return buildSpreadsheetCell(numericValue, 'summaryCurrency', 'Number');
+  }
+  return buildSpreadsheetCell(numericValue, 'summaryInteger', 'Number');
+}
+
 function generateCSV() {
   const rows = buildExportRows();
   if (rows.length === 0) return '';
@@ -2977,31 +3173,17 @@ function escapeXml(value) {
 
 function generateColoredExcelXml() {
   const orders = getExportOrders();
-  const rows = buildExportRows(orders);
-  if (rows.length === 0) return '';
+  const invoiceRows = buildExcelInvoiceRows(orders);
+  if (invoiceRows.length === 0) return '';
   const totals = buildExcelTotals(orders);
   const productSummary = buildProductQuantitySummary(orders);
-
-  const groupStyleMap = new Map();
-  let useOdd = true;
-  for (const row of rows) {
-    const key = row.__groupKey || '';
-    if (!groupStyleMap.has(key)) {
-      groupStyleMap.set(key, useOdd ? 'groupOdd' : 'groupEven');
-      useOdd = !useOdd;
-    }
-  }
 
   const headerCells = EXPORT_HEADERS.map((header) =>
     `<Cell ss:StyleID="header"><Data ss:Type="String">${escapeXml(header)}</Data></Cell>`
   ).join('');
 
-  const dataRows = rows.map((row) => {
-    const styleId = groupStyleMap.get(row.__groupKey || '') || 'groupOdd';
-    const cells = EXPORT_HEADERS.map((header) => {
-      const value = row[header] ?? '';
-      return `<Cell ss:StyleID="${styleId}"><Data ss:Type="String">${escapeXml(value)}</Data></Cell>`;
-    }).join('');
+  const invoiceRowsXml = invoiceRows.map((row) => {
+    const cells = EXPORT_HEADERS.map((header) => buildInvoiceSpreadsheetCell(header, row[header], row.__rowVariant)).join('');
     return `<Row>${cells}</Row>`;
   }).join('');
 
@@ -3009,7 +3191,7 @@ function generateColoredExcelXml() {
     if (index === 0) {
       return `<Row><Cell ss:StyleID="summaryHeader"><Data ss:Type="String">${escapeXml(row[0])}</Data></Cell></Row>`;
     }
-    return `<Row><Cell ss:StyleID="summaryLabel"><Data ss:Type="String">${escapeXml(row[0])}</Data></Cell><Cell ss:StyleID="summaryValue"><Data ss:Type="String">${escapeXml(row[1])}</Data></Cell></Row>`;
+    return `<Row><Cell ss:StyleID="summaryLabel"><Data ss:Type="String">${escapeXml(row[0])}</Data></Cell>${buildSummarySpreadsheetCell(row[0], row[1])}</Row>`;
   }).join('');
 
   const productSummaryHeader = ['Product Name', 'SKU/Variant', 'Qty Ordered', 'Qty Refunded', 'Qty Sold']
@@ -3019,11 +3201,15 @@ function generateColoredExcelXml() {
     `<Row>` +
       `<Cell ss:StyleID="summaryCell"><Data ss:Type="String">${escapeXml(row.name)}</Data></Cell>` +
       `<Cell ss:StyleID="summaryCell"><Data ss:Type="String">${escapeXml(row.sku)}</Data></Cell>` +
-      `<Cell ss:StyleID="summaryCell"><Data ss:Type="String">${escapeXml(row.qtyOrdered)}</Data></Cell>` +
-      `<Cell ss:StyleID="summaryCell"><Data ss:Type="String">${escapeXml(row.qtyRefunded)}</Data></Cell>` +
-      `<Cell ss:StyleID="summaryCell"><Data ss:Type="String">${escapeXml(row.qtySold)}</Data></Cell>` +
+      buildSpreadsheetCell(row.qtyOrdered, 'summaryInteger', 'Number') +
+      buildSpreadsheetCell(row.qtyRefunded, 'summaryInteger', 'Number') +
+      buildSpreadsheetCell(row.qtySold, 'summaryInteger', 'Number') +
     `</Row>`
   )).join('');
+
+  const columnDefs = EXPORT_HEADERS
+    .map((header) => `<Column ss:AutoFitWidth="0" ss:Width="${EXCEL_COLUMN_WIDTHS[header] || 90}"/>`)
+    .join('');
 
   return `<?xml version="1.0"?>
 <?mso-application progid="Excel.Sheet"?>
@@ -3034,8 +3220,9 @@ function generateColoredExcelXml() {
  xmlns:html="http://www.w3.org/TR/REC-html40">
  <Styles>
   <Style ss:ID="header">
-   <Font ss:Bold="1"/>
-   <Interior ss:Color="#E2EFDA" ss:Pattern="Solid"/>
+   <Font ss:Bold="1" ss:Color="#FFFFFF"/>
+   <Alignment ss:Vertical="Center" ss:Horizontal="Center" ss:WrapText="1"/>
+   <Interior ss:Color="#ED7D31" ss:Pattern="Solid"/>
    <Borders>
     <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
     <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
@@ -3043,7 +3230,8 @@ function generateColoredExcelXml() {
     <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
    </Borders>
   </Style>
-  <Style ss:ID="groupOdd">
+  <Style ss:ID="invoiceOddText">
+   <Alignment ss:Vertical="Top"/>
    <Interior ss:Color="#FFF2CC" ss:Pattern="Solid"/>
    <Borders>
     <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
@@ -3052,8 +3240,73 @@ function generateColoredExcelXml() {
     <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
    </Borders>
   </Style>
-  <Style ss:ID="groupEven">
-   <Interior ss:Color="#D9E1F2" ss:Pattern="Solid"/>
+  <Style ss:ID="invoiceEvenText">
+   <Alignment ss:Vertical="Top"/>
+   <Interior ss:Color="#DDEBF7" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="invoiceOddWrap">
+   <Alignment ss:Vertical="Top" ss:WrapText="1"/>
+   <Interior ss:Color="#FFF2CC" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="invoiceEvenWrap">
+   <Alignment ss:Vertical="Top" ss:WrapText="1"/>
+   <Interior ss:Color="#DDEBF7" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="invoiceOddInteger">
+   <Alignment ss:Vertical="Top" ss:Horizontal="Right"/>
+   <NumberFormat ss:Format="#,##0"/>
+   <Interior ss:Color="#FFF2CC" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="invoiceEvenInteger">
+   <Alignment ss:Vertical="Top" ss:Horizontal="Right"/>
+   <NumberFormat ss:Format="#,##0"/>
+   <Interior ss:Color="#DDEBF7" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="invoiceOddCurrency">
+   <Alignment ss:Vertical="Top" ss:Horizontal="Right"/>
+   <NumberFormat ss:Format="#,##0"/>
+   <Interior ss:Color="#FFF2CC" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="invoiceEvenCurrency">
+   <Alignment ss:Vertical="Top" ss:Horizontal="Right"/>
+   <NumberFormat ss:Format="#,##0"/>
+   <Interior ss:Color="#DDEBF7" ss:Pattern="Solid"/>
    <Borders>
     <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
     <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
@@ -3089,7 +3342,28 @@ function generateColoredExcelXml() {
     <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
    </Borders>
   </Style>
+  <Style ss:ID="summaryInteger">
+   <Alignment ss:Horizontal="Right"/>
+   <NumberFormat ss:Format="#,##0"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="summaryCurrency">
+   <Alignment ss:Horizontal="Right"/>
+   <NumberFormat ss:Format="#,##0"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
+   </Borders>
+  </Style>
   <Style ss:ID="summaryCell">
+   <Alignment ss:Vertical="Top" ss:WrapText="1"/>
    <Borders>
     <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
     <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
@@ -3100,8 +3374,9 @@ function generateColoredExcelXml() {
  </Styles>
  <Worksheet ss:Name="Shopee Export">
   <Table>
+   ${columnDefs}
    <Row>${headerCells}</Row>
-   ${dataRows}
+   ${invoiceRowsXml}
    <Row/>
    ${totalRowsXml}
    <Row/>
@@ -3109,6 +3384,15 @@ function generateColoredExcelXml() {
    <Row>${productSummaryHeader}</Row>
    ${productSummaryRowsXml}
   </Table>
+  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+   <FreezePanes/>
+   <FrozenNoSplit/>
+   <SplitHorizontal>1</SplitHorizontal>
+   <TopRowBottomPane>1</TopRowBottomPane>
+   <ActivePane>2</ActivePane>
+   <ProtectObjects>False</ProtectObjects>
+   <ProtectScenarios>False</ProtectScenarios>
+  </WorksheetOptions>
  </Worksheet>
 </Workbook>`;
 }
