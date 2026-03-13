@@ -7,6 +7,7 @@ const DEFAULT_SETTINGS = {
 
 const elements = {
   orderCount: document.getElementById('orderCount'),
+  remainingCount: document.getElementById('remainingCount'),
   statusText: document.getElementById('statusText'),
   lastRunText: document.getElementById('lastRunText'),
   fileNameText: document.getElementById('fileNameText'),
@@ -92,6 +93,7 @@ async function refreshStatus() {
   };
 
   elements.orderCount.textContent = String(status.orderCount || 0);
+  elements.remainingCount.textContent = String(status.remainingInvoiceCount || status.pendingHydrationCount || 0);
   elements.statusText.textContent = deriveStatusText(status);
   elements.lastRunText.textContent = formatTimestamp(snapshot.lastSyncMeta?.ts);
   elements.fileNameText.textContent = buildFilename('excel');
@@ -139,8 +141,9 @@ async function exportData(kind) {
 }
 
 function deriveStatusText(status) {
+  const remaining = status.remainingInvoiceCount || status.pendingHydrationCount || 0;
   if (status.syncInFlight) {
-    return 'Running';
+    return remaining > 0 ? `Running - ${remaining} left` : 'Running';
   }
   if ((status.orderCount || 0) === 0) {
     return 'Idle';

@@ -358,6 +358,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'GET_STATUS') {
+    const remainingInvoiceCount = getPendingHydrationCount();
     for (const order of Object.values(capturedOrders)) {
       applyOrderGuards(order);
     }
@@ -365,7 +366,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       orderCount: Object.keys(capturedOrders).length,
       orders: capturedOrders,
       syncInFlight,
-      pendingHydrationCount: getPendingHydrationCount(),
+      pendingHydrationCount: remainingInvoiceCount,
+      remainingInvoiceCount,
       readyToExport: canExportCsvNow(),
       buildTag: BUILD_TAG,
       profileEmail: profileInfo.email || ''
@@ -1227,9 +1229,6 @@ function mapFeeKey(key) {
   if (has('refund_amount', 'returned_amount', 'refund_total', 'pengembalian_dana', 'jumlah_pengembalian_dana', 'refund_to_buyer')) {
     return 'refund_amount';
   }
-  if (has('coin', 'koin')) {
-    return 'coins';
-  }
   if (has('merchandise_subtotal', 'product_price', 'buyer_total_amount', 'order_total', 'subtotal_pesanan', 'subtotal_order', 'total_amount', 'harga_produk', 'product_amount')) {
     return 'order_total';
   }
@@ -1523,6 +1522,73 @@ function applyComponentsBreakdownGuard(order) {
 function applyOrderGuards(order) {
   applyComponentsBreakdownGuard(order);
   applyVoucherGuard(order);
+}
+
+function extractCoinsFromSellerIncomeBreakdown(entity) {
+  const breakdown = entity?.seller_income_breakdown?.breakdown;
+  if (!Array.isArray(breakdown) || breakdown.length === 0) {
+    return undefined;
+  }
+
+  let found;
+  const walkEntries = (entries) => {
+    if (!Array.isArray(entries)) return;
+    for (const entry of entries) {
+      if (!entry || typeof entry !== 'object') continue;
+
+      const label = String(firstPresent(
+        entry.field_name,
+        entry.fieldName,
+        entry.display_name,
+        entry.displayName,
+        entry.name,
+        entry.label,
+        entry.title
+      ) || '').toLowerCase();
+      const hasChildren = Array.isArray(entry.sub_breakdown) && entry.sub_breakdown.length > 0;
+      const looksLikeCoins =
+        label.includes('coin_amount') ||
+        label.includes('coins') ||
+        label.includes('shopee coin') ||
+        label.includes('shopee coins') ||
+        label.includes('koin shopee') ||
+        label.includes('koin');
+
+      if (looksLikeCoins && !hasChildren) {
+        const amount = extractNumericFromUnknown(
+          firstPresent(
+            entry.amount,
+            entry.value,
+            entry.money,
+            entry.money_amount,
+            entry.total,
+            entry.fee
+          )
+        );
+        if (amount !== null) {
+          found = amount;
+        }
+      }
+
+      if (hasChildren) {
+        walkEntries(entry.sub_breakdown);
+      }
+    }
+  };
+
+  walkEntries(breakdown);
+  return found;
+}
+
+function pickPaymentMethod(...values) {
+  for (const value of values) {
+    if (value === undefined || value === null) continue;
+    const text = String(value).trim();
+    if (!text) continue;
+    if (/^\d+$/.test(text)) continue;
+    return text;
+  }
+  return '';
 }
 
 function extractVoucherFieldsFromSellerIncomeBreakdown(entity) {
@@ -1946,7 +2012,15 @@ function processEscrowDetail(body) {
     capturedOrders[orderId].coins = normalizeMoneyNumber(escrow.coins || escrow.coin_amount || 0) || 0;
     capturedOrders[orderId].order_total = normalizeMoneyNumber(escrow.escrow_amount || escrow.buyer_total_amount || 0) || 0;
     capturedOrders[orderId].net_income = normalizeMoneyNumber(escrow.income || escrow.final_escrow_product_gst_amount || escrow.net_income || 0) || 0;
-    capturedOrders[orderId].payment_method = escrow.payment_method || detail.payment_method || '';
+    const paymentMethod = pickPaymentMethod(
+      escrow.payment_method_name,
+      detail.payment_method_name,
+      escrow.payment_method,
+      detail.payment_method
+    );
+    if (paymentMethod) {
+      capturedOrders[orderId].payment_method = paymentMethod;
+    }
   }
   const incomeInvoiceId = pickIncomeInvoiceId(detail, true) || pickIncomeInvoiceId(escrow, true);
   if (incomeInvoiceId) {
@@ -2000,6 +2074,12 @@ function processOrderIncomeComponents(body) {
   }
   if (shippingOverrides.shopee_shipping_rebate !== undefined) {
     capturedOrders[orderId].shopee_shipping_rebate = shippingOverrides.shopee_shipping_rebate;
+  }
+  const coinOverride = extractCoinsFromSellerIncomeBreakdown(data);
+  if (coinOverride !== undefined) {
+    capturedOrders[orderId].coins = coinOverride;
+  } else if (hasSellerBreakdown) {
+    capturedOrders[orderId].coins = 0;
   }
 
   if (hasSellerBreakdown) {
@@ -2211,7 +2291,7 @@ function flattenOrder(item) {
       source.income_category ||
       '',
     create_time: createdTs ? formatTimestamp(createdTs) : '',
-    payment_method: firstPresent(
+    payment_method: pickPaymentMethod(
       source.payment_method_name,
       source.paymentMethodName,
       source.payment_method,
@@ -2219,9 +2299,7 @@ function flattenOrder(item) {
       orderIncomeInfo?.payment_method_name,
       orderIncomeInfo?.paymentMethodName,
       orderIncomeInfo?.payment_method,
-      orderIncomeInfo?.paymentMethod,
-      orderInfo?.source,
-      source.source
+      orderIncomeInfo?.paymentMethod
     ) || '',
     total_amount: normalizeMoneyNumber(
       source.total_amount ||
