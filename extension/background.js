@@ -2910,6 +2910,7 @@ function buildProductQuantitySummary(orders) {
 
   for (const order of orders) {
     if (!order || !Array.isArray(order.items)) continue;
+    const orderKey = firstPresent(order.order_id, order.order_sn, order.income_invoice_id, '');
     for (const item of order.items) {
       if (!item || typeof item !== 'object') continue;
       const name = String(item.name || '-').trim() || '-';
@@ -2917,6 +2918,7 @@ function buildProductQuantitySummary(orders) {
       const orderedQty = toNumberOrNull(item.quantity) || 0;
       const refundedQty = Math.max(toNumberOrNull(item.refund_qty) || 0, 0);
       const soldQty = Math.max(orderedQty - refundedQty, 0);
+      const salesSubtotal = toNumberOrNull(item.subtotal) || 0;
       const key = `${name}\u0000${sku}`;
 
       if (!productMap.has(key)) {
@@ -2925,7 +2927,9 @@ function buildProductQuantitySummary(orders) {
           sku,
           qtyOrdered: 0,
           qtyRefunded: 0,
-          qtySold: 0
+          qtySold: 0,
+          salesSubtotal: 0,
+          _orderKeys: new Set()
         });
       }
 
@@ -2933,10 +2937,23 @@ function buildProductQuantitySummary(orders) {
       entry.qtyOrdered += orderedQty;
       entry.qtyRefunded += refundedQty;
       entry.qtySold += soldQty;
+      entry.salesSubtotal += salesSubtotal;
+      if (orderKey) {
+        entry._orderKeys.add(orderKey);
+      }
     }
   }
 
   return Array.from(productMap.values())
+    .map((entry) => ({
+      name: entry.name,
+      sku: entry.sku,
+      qtyOrdered: entry.qtyOrdered,
+      qtyRefunded: entry.qtyRefunded,
+      qtySold: entry.qtySold,
+      salesSubtotal: entry.salesSubtotal,
+      orderCount: entry._orderKeys.size
+    }))
     .sort((left, right) => {
       const soldDiff = right.qtySold - left.qtySold;
       if (soldDiff !== 0) return soldDiff;
@@ -2975,55 +2992,654 @@ function escapeXml(value) {
     .replace(/'/g, '&apos;');
 }
 
+function makeCellSpec(value, type = 'string', options = {}) {
+  return {
+    __cellSpec: true,
+    value,
+    type,
+    wrap: Boolean(options.wrap)
+  };
+}
+
+function isCellSpec(value) {
+  return Boolean(value && typeof value === 'object' && value.__cellSpec);
+}
+
+function formatNumberDisplay(value) {
+  const numeric = toNumberOrNull(value);
+  if (numeric === null) return '';
+  return numeric.toLocaleString('id-ID');
+}
+
+function hasRefundedItem(item) {
+  if (!item || typeof item !== 'object') return false;
+  return Boolean(item.refund_status) || (toNumberOrNull(item.refund_qty) || 0) > 0;
+}
+
+function hasRefundedOrder(order) {
+  if (!order || typeof order !== 'object') return false;
+  if ((toNumberOrNull(order.refund_amount) || 0) !== 0) return true;
+  return Array.isArray(order.items) && order.items.some(hasRefundedItem);
+}
+
+function getOrderPrimaryTotal(order) {
+  return toNumberOrNull(firstPresent(order?.total_amount, order?.order_total, order?.order_income)) || 0;
+}
+
+function getOrderPrimaryIncome(order) {
+  return toNumberOrNull(firstPresent(order?.order_income, order?.net_income)) || 0;
+}
+
+function getOrderPrimaryNetIncome(order) {
+  return toNumberOrNull(firstPresent(order?.net_income, order?.order_income)) || 0;
+}
+
+function getOrderDateRange(orders) {
+  const timestamps = orders
+    .map((order) => getOrderSortTimestamp(order))
+    .filter((value) => value > 0);
+
+  if (timestamps.length === 0) {
+    return { from: '', to: '' };
+  }
+
+  const from = new Date(Math.min(...timestamps)).toISOString().slice(0, 10);
+  const to = new Date(Math.max(...timestamps)).toISOString().slice(0, 10);
+  return { from, to };
+}
+
+function buildSummarySheetRows(orders, productSummary) {
+  const dateRange = getOrderDateRange(orders);
+  const grossSales = sumPreferredOrderFields(orders, ['total_amount', 'order_total', 'order_income']);
+  const totalQtyOrdered = productSummary.reduce((sum, item) => sum + (item.qtyOrdered || 0), 0);
+  const totalQtyRefunded = productSummary.reduce((sum, item) => sum + (item.qtyRefunded || 0), 0);
+  const totalQtySold = productSummary.reduce((sum, item) => sum + (item.qtySold || 0), 0);
+  const refundedOrders = orders.filter(hasRefundedOrder).length;
+  const refundedLines = orders.reduce((sum, order) => {
+    if (!Array.isArray(order.items)) return sum;
+    return sum + order.items.filter(hasRefundedItem).length;
+  }, 0);
+
+  return [
+    { Metric: 'Generated At', Value: formatTimestamp(Date.now()) },
+    { Metric: 'Profile Email', Value: profileInfo.email || '' },
+    { Metric: 'Date From', Value: dateRange.from },
+    { Metric: 'Date To', Value: dateRange.to },
+    { Metric: 'Total Orders', Value: makeCellSpec(orders.length, 'integer') },
+    { Metric: 'Refunded Orders', Value: makeCellSpec(refundedOrders, 'integer') },
+    { Metric: 'Refunded Lines', Value: makeCellSpec(refundedLines, 'integer') },
+    { Metric: 'Total Qty Ordered', Value: makeCellSpec(totalQtyOrdered, 'integer') },
+    { Metric: 'Total Qty Refunded', Value: makeCellSpec(totalQtyRefunded, 'integer') },
+    { Metric: 'Total Qty Sold', Value: makeCellSpec(totalQtySold, 'integer') },
+    { Metric: 'Gross Sales (Rp)', Value: makeCellSpec(grossSales, 'currency') },
+    { Metric: 'Refund Amount (Rp)', Value: makeCellSpec(sumOrderField(orders, 'refund_amount'), 'currency') },
+    { Metric: 'Admin Fee (Rp)', Value: makeCellSpec(sumOrderField(orders, 'admin_fee'), 'currency') },
+    { Metric: 'Service Fee (Rp)', Value: makeCellSpec(sumOrderField(orders, 'service_fee'), 'currency') },
+    { Metric: 'Transaction Fee (Rp)', Value: makeCellSpec(sumOrderField(orders, 'transaction_fee'), 'currency') },
+    { Metric: 'Shipping Fee (Rp)', Value: makeCellSpec(sumOrderField(orders, 'shipping_fee'), 'currency') },
+    { Metric: 'Shipping Fee Rebate (Rp)', Value: makeCellSpec(sumOrderField(orders, 'shipping_fee_rebate'), 'currency') },
+    { Metric: 'Buyer Shipping Fee (Rp)', Value: makeCellSpec(sumOrderField(orders, 'buyer_shipping_fee'), 'currency') },
+    { Metric: 'Shopee Shipping Rebate (Rp)', Value: makeCellSpec(sumOrderField(orders, 'shopee_shipping_rebate'), 'currency') },
+    { Metric: 'Voucher Shopee (Rp)', Value: makeCellSpec(sumOrderField(orders, 'voucher_from_shopee'), 'currency') },
+    { Metric: 'Voucher Seller (Rp)', Value: makeCellSpec(sumOrderField(orders, 'voucher_from_seller'), 'currency') },
+    { Metric: 'Coins (Rp)', Value: makeCellSpec(sumOrderField(orders, 'coins'), 'currency') },
+    { Metric: 'Order Income (Rp)', Value: makeCellSpec(sumPreferredOrderFields(orders, ['order_income', 'net_income']), 'currency') },
+    { Metric: 'Net Income (Rp)', Value: makeCellSpec(sumPreferredOrderFields(orders, ['net_income', 'order_income']), 'currency') }
+  ];
+}
+
+function buildOrdersSheetRows(orders) {
+  return orders.map((order) => {
+    applyOrderGuards(order);
+    const items = Array.isArray(order.items) ? order.items : [];
+    const itemList = items.map((item) => {
+      const name = item?.name || '-';
+      const sku = item?.sku ? ` [${item.sku}]` : '';
+      const qty = formatNumberDisplay(item?.quantity) || '0';
+      return `${name}${sku} x${qty}`;
+    }).join('\n');
+
+    return {
+      'Order Date': extractOrderDateText(order.create_time || ''),
+      Created: order.create_time || '',
+      'Order ID': order.order_id || '',
+      'Order SN': order.order_sn || '',
+      'Income Invoice ID': order.income_invoice_id || '',
+      'Buyer Name': order.buyer_name || '',
+      'Payment Method': order.payment_method || '',
+      'Order Status': order.order_status || '',
+      'Item Count': items.length,
+      'Total Quantity': toNumberOrNull(order.total_quantity) || 0,
+      Refunded: hasRefundedOrder(order) ? 'Yes' : 'No',
+      'Order Total (Rp)': getOrderPrimaryTotal(order),
+      'Refund Amount (Rp)': toNumberOrNull(order.refund_amount) || 0,
+      'Admin Fee (Rp)': toNumberOrNull(order.admin_fee) || 0,
+      'Service Fee (Rp)': toNumberOrNull(order.service_fee) || 0,
+      'Transaction Fee (Rp)': toNumberOrNull(order.transaction_fee) || 0,
+      'Shipping Fee (Rp)': toNumberOrNull(order.shipping_fee) || 0,
+      'Shipping Fee Rebate (Rp)': toNumberOrNull(order.shipping_fee_rebate) || 0,
+      'Buyer Shipping Fee (Rp)': toNumberOrNull(order.buyer_shipping_fee) || 0,
+      'Shopee Shipping Rebate (Rp)': toNumberOrNull(order.shopee_shipping_rebate) || 0,
+      'Voucher Shopee (Rp)': toNumberOrNull(order.voucher_from_shopee) || 0,
+      'Voucher Seller (Rp)': toNumberOrNull(order.voucher_from_seller) || 0,
+      'Coins (Rp)': toNumberOrNull(order.coins) || 0,
+      'Order Income (Rp)': getOrderPrimaryIncome(order),
+      'Net Income (Rp)': getOrderPrimaryNetIncome(order),
+      Items: makeCellSpec(itemList, 'string', { wrap: true })
+    };
+  });
+}
+
+function buildFeesSheetRows(orders) {
+  const grossSales = sumPreferredOrderFields(orders, ['total_amount', 'order_total', 'order_income']);
+  const entries = [
+    ['Refund Amount', sumOrderField(orders, 'refund_amount')],
+    ['Admin Fee', sumOrderField(orders, 'admin_fee')],
+    ['Service Fee', sumOrderField(orders, 'service_fee')],
+    ['Transaction Fee', sumOrderField(orders, 'transaction_fee')],
+    ['Shipping Fee', sumOrderField(orders, 'shipping_fee')],
+    ['Shipping Fee Rebate', sumOrderField(orders, 'shipping_fee_rebate')],
+    ['Buyer Shipping Fee', sumOrderField(orders, 'buyer_shipping_fee')],
+    ['Shopee Shipping Rebate', sumOrderField(orders, 'shopee_shipping_rebate')],
+    ['Voucher Shopee', sumOrderField(orders, 'voucher_from_shopee')],
+    ['Voucher Seller', sumOrderField(orders, 'voucher_from_seller')],
+    ['Coins', sumOrderField(orders, 'coins')]
+  ];
+
+  return entries.map(([feeType, amount]) => ({
+    'Fee Type': feeType,
+    'Amount (Rp)': amount,
+    'Percent of Gross Sales': grossSales !== 0 ? amount / grossSales : 0
+  }));
+}
+
+function buildRefundsSheetRows(orders) {
+  const rows = [];
+
+  for (const order of orders) {
+    applyOrderGuards(order);
+    const items = Array.isArray(order.items) ? order.items : [];
+    const refundedItems = items.filter(hasRefundedItem);
+    const orderRefundAmount = toNumberOrNull(order.refund_amount) || 0;
+
+    if (refundedItems.length === 0 && orderRefundAmount === 0) {
+      continue;
+    }
+
+    if (refundedItems.length === 0) {
+      rows.push({
+        'Order Date': extractOrderDateText(order.create_time || ''),
+        'Order ID': order.order_id || '',
+        'Order SN': order.order_sn || '',
+        'Payment Method': order.payment_method || '',
+        'Product Name': '',
+        'SKU/Variant': '',
+        'Qty Ordered': 0,
+        'Qty Refunded': 0,
+        'Refund Status': 'Order Refund',
+        'Product Subtotal (Rp)': 0,
+        'Refund Amount (Rp)': orderRefundAmount,
+        'Net Income (Rp)': getOrderPrimaryNetIncome(order)
+      });
+      continue;
+    }
+
+    refundedItems.forEach((item, index) => {
+      rows.push({
+        'Order Date': extractOrderDateText(order.create_time || ''),
+        'Order ID': order.order_id || '',
+        'Order SN': order.order_sn || '',
+        'Payment Method': order.payment_method || '',
+        'Product Name': item.name || '',
+        'SKU/Variant': item.sku || '',
+        'Qty Ordered': toNumberOrNull(item.quantity) || 0,
+        'Qty Refunded': toNumberOrNull(item.refund_qty) || 0,
+        'Refund Status': item.refund_status || 'Return/Refund',
+        'Product Subtotal (Rp)': toNumberOrNull(item.subtotal) || 0,
+        'Refund Amount (Rp)': index === 0 ? orderRefundAmount : '',
+        'Net Income (Rp)': index === 0 ? getOrderPrimaryNetIncome(order) : ''
+      });
+    });
+  }
+
+  return rows;
+}
+
+const EXCEL_BASE_STYLES = `
+  <Style ss:ID="header">
+   <Font ss:Bold="1" ss:Color="#FFFFFF"/>
+   <Alignment ss:Vertical="Center" ss:Horizontal="Center" ss:WrapText="1"/>
+   <Interior ss:Color="#ED7D31" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="rowOddText">
+   <Alignment ss:Vertical="Top"/>
+   <Interior ss:Color="#FFF2CC" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="rowEvenText">
+   <Alignment ss:Vertical="Top"/>
+   <Interior ss:Color="#DDEBF7" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="rowOddWrap">
+   <Alignment ss:Vertical="Top" ss:WrapText="1"/>
+   <Interior ss:Color="#FFF2CC" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="rowEvenWrap">
+   <Alignment ss:Vertical="Top" ss:WrapText="1"/>
+   <Interior ss:Color="#DDEBF7" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="rowOddInteger">
+   <Alignment ss:Vertical="Top" ss:Horizontal="Right"/>
+   <NumberFormat ss:Format="#,##0"/>
+   <Interior ss:Color="#FFF2CC" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="rowEvenInteger">
+   <Alignment ss:Vertical="Top" ss:Horizontal="Right"/>
+   <NumberFormat ss:Format="#,##0"/>
+   <Interior ss:Color="#DDEBF7" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="rowOddCurrency">
+   <Alignment ss:Vertical="Top" ss:Horizontal="Right"/>
+   <NumberFormat ss:Format="#,##0"/>
+   <Interior ss:Color="#FFF2CC" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="rowEvenCurrency">
+   <Alignment ss:Vertical="Top" ss:Horizontal="Right"/>
+   <NumberFormat ss:Format="#,##0"/>
+   <Interior ss:Color="#DDEBF7" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="rowOddPercent">
+   <Alignment ss:Vertical="Top" ss:Horizontal="Right"/>
+   <NumberFormat ss:Format="0.00%"/>
+   <Interior ss:Color="#FFF2CC" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="rowEvenPercent">
+   <Alignment ss:Vertical="Top" ss:Horizontal="Right"/>
+   <NumberFormat ss:Format="0.00%"/>
+   <Interior ss:Color="#DDEBF7" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
+   </Borders>
+  </Style>`;
+
+const SUMMARY_HEADERS = ['Metric', 'Value'];
+const ORDERS_SHEET_HEADERS = [
+  'Order Date',
+  'Created',
+  'Order ID',
+  'Order SN',
+  'Income Invoice ID',
+  'Buyer Name',
+  'Payment Method',
+  'Order Status',
+  'Item Count',
+  'Total Quantity',
+  'Refunded',
+  'Order Total (Rp)',
+  'Refund Amount (Rp)',
+  'Admin Fee (Rp)',
+  'Service Fee (Rp)',
+  'Transaction Fee (Rp)',
+  'Shipping Fee (Rp)',
+  'Shipping Fee Rebate (Rp)',
+  'Buyer Shipping Fee (Rp)',
+  'Shopee Shipping Rebate (Rp)',
+  'Voucher Shopee (Rp)',
+  'Voucher Seller (Rp)',
+  'Coins (Rp)',
+  'Order Income (Rp)',
+  'Net Income (Rp)',
+  'Items'
+];
+
+const PRODUCTS_SHEET_HEADERS = [
+  'Product Name',
+  'SKU/Variant',
+  'Qty Ordered',
+  'Qty Refunded',
+  'Qty Sold',
+  'Sales Subtotal (Rp)',
+  'Order Count'
+];
+
+const FEES_SHEET_HEADERS = ['Fee Type', 'Amount (Rp)', 'Percent of Gross Sales'];
+
+const REFUNDS_SHEET_HEADERS = [
+  'Order Date',
+  'Order ID',
+  'Order SN',
+  'Payment Method',
+  'Product Name',
+  'SKU/Variant',
+  'Qty Ordered',
+  'Qty Refunded',
+  'Refund Status',
+  'Product Subtotal (Rp)',
+  'Refund Amount (Rp)',
+  'Net Income (Rp)'
+];
+
+const ORDER_LINE_COLUMN_CONFIG = {
+  'Order ID': { width: 95 },
+  'Order SN': { width: 95 },
+  'Income Invoice ID': { width: 95 },
+  'Buyer Name': { width: 110 },
+  'Order Status': { width: 70 },
+  'Created': { width: 110 },
+  'Order Date': { width: 80 },
+  'Payment Method': { width: 110 },
+  'Product Name': { width: 240, wrap: true },
+  'SKU/Variant': { width: 120, wrap: true },
+  'Quantity': { width: 60, type: 'integer' },
+  'Unit Price': { width: 85, type: 'currency' },
+  'Product Subtotal': { width: 90, type: 'currency' },
+  'Refund Status': { width: 100, wrap: true },
+  'Refund Qty': { width: 60, type: 'integer' },
+  'Item Details': { width: 280, wrap: true },
+  'Total Quantity': { width: 70, type: 'integer' },
+  'Order Total (Rp)': { width: 90, type: 'currency' },
+  'Refund Amount (Rp)': { width: 90, type: 'currency' },
+  'Admin Fee (Rp)': { width: 85, type: 'currency' },
+  'Service Fee (Rp)': { width: 85, type: 'currency' },
+  'Transaction Fee (Rp)': { width: 90, type: 'currency' },
+  'Shipping Fee (Rp)': { width: 85, type: 'currency' },
+  'Shipping Fee Rebate (Rp)': { width: 95, type: 'currency' },
+  'Buyer Shipping Fee (Rp)': { width: 95, type: 'currency' },
+  'Shopee Shipping Rebate (Rp)': { width: 105, type: 'currency' },
+  'Voucher Shopee (Rp)': { width: 90, type: 'currency' },
+  'Voucher Seller (Rp)': { width: 90, type: 'currency' },
+  'Coins (Rp)': { width: 75, type: 'currency' },
+  'Order Income (Rp)': { width: 90, type: 'currency' },
+  'Net Income (Rp)': { width: 90, type: 'currency' }
+};
+
+const SUMMARY_COLUMN_CONFIG = {
+  Metric: { width: 180, wrap: true },
+  Value: { width: 120, wrap: true }
+};
+
+const ORDERS_COLUMN_CONFIG = {
+  'Order Date': { width: 80 },
+  Created: { width: 110 },
+  'Order ID': { width: 95 },
+  'Order SN': { width: 95 },
+  'Income Invoice ID': { width: 95 },
+  'Buyer Name': { width: 120, wrap: true },
+  'Payment Method': { width: 110, wrap: true },
+  'Order Status': { width: 70 },
+  'Item Count': { width: 60, type: 'integer' },
+  'Total Quantity': { width: 75, type: 'integer' },
+  Refunded: { width: 70 },
+  'Order Total (Rp)': { width: 90, type: 'currency' },
+  'Refund Amount (Rp)': { width: 90, type: 'currency' },
+  'Admin Fee (Rp)': { width: 85, type: 'currency' },
+  'Service Fee (Rp)': { width: 85, type: 'currency' },
+  'Transaction Fee (Rp)': { width: 90, type: 'currency' },
+  'Shipping Fee (Rp)': { width: 85, type: 'currency' },
+  'Shipping Fee Rebate (Rp)': { width: 95, type: 'currency' },
+  'Buyer Shipping Fee (Rp)': { width: 95, type: 'currency' },
+  'Shopee Shipping Rebate (Rp)': { width: 105, type: 'currency' },
+  'Voucher Shopee (Rp)': { width: 90, type: 'currency' },
+  'Voucher Seller (Rp)': { width: 90, type: 'currency' },
+  'Coins (Rp)': { width: 75, type: 'currency' },
+  'Order Income (Rp)': { width: 90, type: 'currency' },
+  'Net Income (Rp)': { width: 90, type: 'currency' },
+  Items: { width: 280, wrap: true }
+};
+
+const PRODUCTS_COLUMN_CONFIG = {
+  'Product Name': { width: 260, wrap: true },
+  'SKU/Variant': { width: 120, wrap: true },
+  'Qty Ordered': { width: 80, type: 'integer' },
+  'Qty Refunded': { width: 80, type: 'integer' },
+  'Qty Sold': { width: 80, type: 'integer' },
+  'Sales Subtotal (Rp)': { width: 100, type: 'currency' },
+  'Order Count': { width: 75, type: 'integer' }
+};
+
+const FEES_COLUMN_CONFIG = {
+  'Fee Type': { width: 180, wrap: true },
+  'Amount (Rp)': { width: 95, type: 'currency' },
+  'Percent of Gross Sales': { width: 100, type: 'percent' }
+};
+
+const REFUNDS_COLUMN_CONFIG = {
+  'Order Date': { width: 80 },
+  'Order ID': { width: 95 },
+  'Order SN': { width: 95 },
+  'Payment Method': { width: 110, wrap: true },
+  'Product Name': { width: 260, wrap: true },
+  'SKU/Variant': { width: 120, wrap: true },
+  'Qty Ordered': { width: 75, type: 'integer' },
+  'Qty Refunded': { width: 75, type: 'integer' },
+  'Refund Status': { width: 100, wrap: true },
+  'Product Subtotal (Rp)': { width: 95, type: 'currency' },
+  'Refund Amount (Rp)': { width: 95, type: 'currency' },
+  'Net Income (Rp)': { width: 90, type: 'currency' }
+};
+
+function sanitizeWorksheetName(name) {
+  const text = String(name || 'Sheet').replace(/[:\\\\/?*\\[\\]]/g, ' ').trim();
+  return (text || 'Sheet').slice(0, 31);
+}
+
+function buildSpreadsheetCell(value, styleId, type = 'String') {
+  const normalizedType = type === 'Number' ? 'Number' : 'String';
+  const normalizedValue = normalizedType === 'Number'
+    ? String(Number(value || 0))
+    : String(value ?? '');
+  return `<Cell ss:StyleID="${styleId}"><Data ss:Type="${normalizedType}">${escapeXml(normalizedValue)}</Data></Cell>`;
+}
+
+function buildSheetCell(value, columnConfig, variant) {
+  const config = columnConfig || {};
+  const prefix = variant === 'Even' ? 'rowEven' : 'rowOdd';
+  let cellValue = value;
+  let type = config.type || 'string';
+  let wrap = Boolean(config.wrap);
+
+  if (isCellSpec(value)) {
+    cellValue = value.value;
+    type = value.type || type;
+    wrap = Boolean(value.wrap || wrap);
+  }
+
+  if (cellValue === '' || cellValue === null || cellValue === undefined) {
+    return buildSpreadsheetCell('', wrap ? `${prefix}Wrap` : `${prefix}Text`, 'String');
+  }
+
+  if (typeof cellValue === 'string' && cellValue.includes('\n')) {
+    wrap = true;
+  }
+
+  if (type === 'integer') {
+    return buildSpreadsheetCell(toNumberOrNull(cellValue) || 0, `${prefix}Integer`, 'Number');
+  }
+  if (type === 'currency') {
+    return buildSpreadsheetCell(toNumberOrNull(cellValue) || 0, `${prefix}Currency`, 'Number');
+  }
+  if (type === 'percent') {
+    return buildSpreadsheetCell(toNumberOrNull(cellValue) || 0, `${prefix}Percent`, 'Number');
+  }
+
+  return buildSpreadsheetCell(cellValue, wrap ? `${prefix}Wrap` : `${prefix}Text`, 'String');
+}
+
+function buildWorksheetXml(options) {
+  const {
+    name,
+    headers,
+    rows,
+    columnConfig = {},
+    groupField = ''
+  } = options;
+
+  const columnDefs = headers
+    .map((header) => `<Column ss:AutoFitWidth="0" ss:Width="${columnConfig[header]?.width || 90}"/>`)
+    .join('');
+  const headerCells = headers
+    .map((header) => `<Cell ss:StyleID="header"><Data ss:Type="String">${escapeXml(header)}</Data></Cell>`)
+    .join('');
+
+  let lastGroupValue = null;
+  let currentVariant = 'Even';
+
+  const dataRowsXml = rows.map((row, index) => {
+    const variant = groupField
+      ? (() => {
+          const groupValue = String(row?.[groupField] || `row_${index}`);
+          if (groupValue !== lastGroupValue) {
+            currentVariant = currentVariant === 'Odd' ? 'Even' : 'Odd';
+            lastGroupValue = groupValue;
+          }
+          return currentVariant;
+        })()
+      : (index % 2 === 0 ? 'Odd' : 'Even');
+
+    const cells = headers
+      .map((header) => buildSheetCell(row?.[header], columnConfig[header], variant))
+      .join('');
+    return `<Row>${cells}</Row>`;
+  }).join('');
+
+  return `<Worksheet ss:Name="${escapeXml(sanitizeWorksheetName(name))}">
+  <Table>
+   ${columnDefs}
+   <Row>${headerCells}</Row>
+   ${dataRowsXml}
+  </Table>
+  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+   <FreezePanes/>
+   <FrozenNoSplit/>
+   <SplitHorizontal>1</SplitHorizontal>
+   <TopRowBottomPane>1</TopRowBottomPane>
+   <ActivePane>2</ActivePane>
+   <ProtectObjects>False</ProtectObjects>
+   <ProtectScenarios>False</ProtectScenarios>
+  </WorksheetOptions>
+ </Worksheet>`;
+}
+
 function generateColoredExcelXml() {
   const orders = getExportOrders();
   const rows = buildExportRows(orders);
   if (rows.length === 0) return '';
-  const totals = buildExcelTotals(orders);
   const productSummary = buildProductQuantitySummary(orders);
+  const summaryRows = buildSummarySheetRows(orders, productSummary);
+  const orderRows = buildOrdersSheetRows(orders);
+  const productRows = productSummary.map((row) => ({
+    'Product Name': row.name || '',
+    'SKU/Variant': row.sku || '',
+    'Qty Ordered': row.qtyOrdered || 0,
+    'Qty Refunded': row.qtyRefunded || 0,
+    'Qty Sold': row.qtySold || 0,
+    'Sales Subtotal (Rp)': row.salesSubtotal || 0,
+    'Order Count': row.orderCount || 0
+  }));
+  const feeRows = buildFeesSheetRows(orders);
+  const refundRows = buildRefundsSheetRows(orders);
 
-  const groupStyleMap = new Map();
-  let useOdd = true;
-  for (const row of rows) {
-    const key = row.__groupKey || '';
-    if (!groupStyleMap.has(key)) {
-      groupStyleMap.set(key, useOdd ? 'groupOdd' : 'groupEven');
-      useOdd = !useOdd;
-    }
-  }
-
-  const headerCells = EXPORT_HEADERS.map((header) =>
-    `<Cell ss:StyleID="header"><Data ss:Type="String">${escapeXml(header)}</Data></Cell>`
-  ).join('');
-
-  const dataRows = rows.map((row) => {
-    const styleId = groupStyleMap.get(row.__groupKey || '') || 'groupOdd';
-    const cells = EXPORT_HEADERS.map((header) => {
-      const value = row[header] ?? '';
-      return `<Cell ss:StyleID="${styleId}"><Data ss:Type="String">${escapeXml(value)}</Data></Cell>`;
-    }).join('');
-    return `<Row>${cells}</Row>`;
-  }).join('');
-
-  const totalRowsXml = totals.map((row, index) => {
-    if (index === 0) {
-      return `<Row><Cell ss:StyleID="summaryHeader"><Data ss:Type="String">${escapeXml(row[0])}</Data></Cell></Row>`;
-    }
-    return `<Row><Cell ss:StyleID="summaryLabel"><Data ss:Type="String">${escapeXml(row[0])}</Data></Cell><Cell ss:StyleID="summaryValue"><Data ss:Type="String">${escapeXml(row[1])}</Data></Cell></Row>`;
-  }).join('');
-
-  const productSummaryHeader = ['Product Name', 'SKU/Variant', 'Qty Ordered', 'Qty Refunded', 'Qty Sold']
-    .map((header) => `<Cell ss:StyleID="header"><Data ss:Type="String">${escapeXml(header)}</Data></Cell>`)
-    .join('');
-  const productSummaryRowsXml = productSummary.map((row) => (
-    `<Row>` +
-      `<Cell ss:StyleID="summaryCell"><Data ss:Type="String">${escapeXml(row.name)}</Data></Cell>` +
-      `<Cell ss:StyleID="summaryCell"><Data ss:Type="String">${escapeXml(row.sku)}</Data></Cell>` +
-      `<Cell ss:StyleID="summaryCell"><Data ss:Type="String">${escapeXml(row.qtyOrdered)}</Data></Cell>` +
-      `<Cell ss:StyleID="summaryCell"><Data ss:Type="String">${escapeXml(row.qtyRefunded)}</Data></Cell>` +
-      `<Cell ss:StyleID="summaryCell"><Data ss:Type="String">${escapeXml(row.qtySold)}</Data></Cell>` +
-    `</Row>`
-  )).join('');
+  const worksheets = [
+    buildWorksheetXml({
+      name: 'Summary',
+      headers: SUMMARY_HEADERS,
+      rows: summaryRows,
+      columnConfig: SUMMARY_COLUMN_CONFIG
+    }),
+    buildWorksheetXml({
+      name: 'Orders',
+      headers: ORDERS_SHEET_HEADERS,
+      rows: orderRows,
+      columnConfig: ORDERS_COLUMN_CONFIG
+    }),
+    buildWorksheetXml({
+      name: 'Order Lines',
+      headers: EXPORT_HEADERS,
+      rows,
+      columnConfig: ORDER_LINE_COLUMN_CONFIG,
+      groupField: '__groupKey'
+    }),
+    buildWorksheetXml({
+      name: 'Products',
+      headers: PRODUCTS_SHEET_HEADERS,
+      rows: productRows,
+      columnConfig: PRODUCTS_COLUMN_CONFIG
+    }),
+    buildWorksheetXml({
+      name: 'Fees',
+      headers: FEES_SHEET_HEADERS,
+      rows: feeRows,
+      columnConfig: FEES_COLUMN_CONFIG
+    }),
+    buildWorksheetXml({
+      name: 'Refunds',
+      headers: REFUNDS_SHEET_HEADERS,
+      rows: refundRows,
+      columnConfig: REFUNDS_COLUMN_CONFIG
+    })
+  ].join('\n');
 
   return `<?xml version="1.0"?>
 <?mso-application progid="Excel.Sheet"?>
@@ -3033,83 +3649,9 @@ function generateColoredExcelXml() {
  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"
  xmlns:html="http://www.w3.org/TR/REC-html40">
  <Styles>
-  <Style ss:ID="header">
-   <Font ss:Bold="1"/>
-   <Interior ss:Color="#E2EFDA" ss:Pattern="Solid"/>
-   <Borders>
-    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
-    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
-    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
-    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
-   </Borders>
-  </Style>
-  <Style ss:ID="groupOdd">
-   <Interior ss:Color="#FFF2CC" ss:Pattern="Solid"/>
-   <Borders>
-    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
-    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
-    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
-    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
-   </Borders>
-  </Style>
-  <Style ss:ID="groupEven">
-   <Interior ss:Color="#D9E1F2" ss:Pattern="Solid"/>
-   <Borders>
-    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
-    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
-    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
-    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#E0E0E0"/>
-   </Borders>
-  </Style>
-  <Style ss:ID="summaryHeader">
-   <Font ss:Bold="1" ss:Size="12"/>
-   <Interior ss:Color="#FCE4D6" ss:Pattern="Solid"/>
-   <Borders>
-    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
-    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
-    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
-    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#BFBFBF"/>
-   </Borders>
-  </Style>
-  <Style ss:ID="summaryLabel">
-   <Font ss:Bold="1"/>
-   <Interior ss:Color="#F8CBAD" ss:Pattern="Solid"/>
-   <Borders>
-    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-   </Borders>
-  </Style>
-  <Style ss:ID="summaryValue">
-   <Borders>
-    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-   </Borders>
-  </Style>
-  <Style ss:ID="summaryCell">
-   <Borders>
-    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-    <Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-    <Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-    <Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9D9D9"/>
-   </Borders>
-  </Style>
+${EXCEL_BASE_STYLES}
  </Styles>
- <Worksheet ss:Name="Shopee Export">
-  <Table>
-   <Row>${headerCells}</Row>
-   ${dataRows}
-   <Row/>
-   ${totalRowsXml}
-   <Row/>
-   <Row><Cell ss:StyleID="summaryHeader"><Data ss:Type="String">Product Quantity Summary</Data></Cell></Row>
-   <Row>${productSummaryHeader}</Row>
-   ${productSummaryRowsXml}
-  </Table>
- </Worksheet>
+ ${worksheets}
 </Workbook>`;
 }
 
