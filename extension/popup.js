@@ -7,7 +7,6 @@ const DEFAULT_SETTINGS = {
 
 const elements = {
   orderCount: document.getElementById('orderCount'),
-  pendingCount: document.getElementById('pendingCount'),
   statusText: document.getElementById('statusText'),
   lastRunText: document.getElementById('lastRunText'),
   fileNameText: document.getElementById('fileNameText'),
@@ -36,11 +35,6 @@ elements.btnStart.addEventListener('click', async () => {
 
   if (!response || !response.ok) {
     setMessage('error', `Start failed: ${response?.error || 'unknown error'}`);
-    return;
-  }
-
-  if (snapshot.status && snapshot.status.orderCount > 0 && (snapshot.status.pendingHydrationCount || 0) > 0) {
-    setMessage('warning', `Sync finished. Export is available, but ${snapshot.status.pendingHydrationCount || 0} invoice(s) may still be incomplete.`);
     return;
   }
 
@@ -98,7 +92,6 @@ async function refreshStatus() {
   };
 
   elements.orderCount.textContent = String(status.orderCount || 0);
-  elements.pendingCount.textContent = String(status.pendingHydrationCount || 0);
   elements.statusText.textContent = deriveStatusText(status);
   elements.lastRunText.textContent = formatTimestamp(snapshot.lastSyncMeta?.ts);
   elements.fileNameText.textContent = buildFilename('excel');
@@ -142,12 +135,6 @@ async function exportData(kind) {
     await refreshStatus();
   }
 
-  const pending = snapshot.status?.pendingHydrationCount || 0;
-  if (pending > 0) {
-    setMessage('warning', `${kind === 'excel' ? 'Excel' : 'CSV'} downloaded. ${pending} invoice(s) may still be incomplete.`);
-    return;
-  }
-
   setMessage('success', kind === 'excel' ? 'Excel downloaded.' : 'CSV downloaded.');
 }
 
@@ -158,10 +145,7 @@ function deriveStatusText(status) {
   if ((status.orderCount || 0) === 0) {
     return 'Idle';
   }
-  if ((status.pendingHydrationCount || 0) > 0) {
-    return 'Export available';
-  }
-  return 'Ready';
+  return 'Ready to export';
 }
 
 function buildFilename(kind) {

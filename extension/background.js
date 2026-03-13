@@ -929,7 +929,9 @@ function dedupeItems(items, options = {}) {
           item.sku || '',
           item.quantity || 0,
           item.unit_price || 0,
-          item.subtotal || 0
+          item.subtotal || 0,
+          item.refund_status || '',
+          item.refund_qty || 0
         ].join('|');
     const existingIndex = seen.get(key);
     if (existingIndex === undefined) {
@@ -946,11 +948,20 @@ function dedupeItems(items, options = {}) {
       const nextQty = toNumberOrNull(item.quantity) || 0;
       const existingSubtotal = toNumberOrNull(existing.subtotal) || 0;
       const nextSubtotal = toNumberOrNull(item.subtotal) || 0;
+      const existingRefundQty = toNumberOrNull(existing.refund_qty) || 0;
+      const nextRefundQty = toNumberOrNull(item.refund_qty) || 0;
       const mergedQty = existingQty + nextQty;
       const mergedSubtotal = existingSubtotal + nextSubtotal;
+      const mergedRefundQty = existingRefundQty + nextRefundQty;
 
       existing.quantity = mergedQty;
       existing.subtotal = mergedSubtotal;
+      existing.refund_qty = mergedRefundQty;
+      existing.refund_status = deriveRefundStatus(
+        mergedQty,
+        mergedRefundQty,
+        Boolean(existing.refund_status || item.refund_status)
+      );
       if ((!toNumberOrNull(existing.unit_price) || toNumberOrNull(existing.unit_price) === 0) && mergedQty > 0) {
         existing.unit_price = mergedSubtotal / mergedQty;
       }
@@ -970,6 +981,18 @@ function dedupeItems(items, options = {}) {
     }
   }
   return unique;
+}
+
+function deriveRefundStatus(quantity, refundQty, hasRefundFlag = false) {
+  const normalizedQty = toNumberOrNull(quantity) || 0;
+  const normalizedRefundQty = toNumberOrNull(refundQty) || 0;
+  if (normalizedRefundQty <= 0 && !hasRefundFlag) {
+    return '';
+  }
+  if (normalizedQty > 0 && normalizedRefundQty > 0 && normalizedRefundQty < normalizedQty) {
+    return 'Partial Return/Refund';
+  }
+  return 'Return/Refund';
 }
 
 function parseItemObject(obj) {
@@ -1019,6 +1042,15 @@ function parseItemObject(obj) {
     obj.line_item_id,
     obj.lineItemId
   );
+  const rawRefundQty = firstNumeric(
+    obj.refunded_qty,
+    obj.refund_qty,
+    obj.returned_qty,
+    obj.return_qty,
+    obj.cancelled_qty,
+    obj.canceled_qty,
+    obj.cancel_qty
+  );
 
   if (!name && !sku) return null;
   if (quantity === null && unitPrice === null && subtotal === null) return null;
@@ -1039,12 +1071,27 @@ function parseItemObject(obj) {
     finalSubtotal = finalQty * finalUnitPrice;
   }
 
+  let refundQty = rawRefundQty !== null ? rawRefundQty : 0;
+  const hasRefundFlag = Boolean(
+    obj.show_return_tag ||
+    obj.showReturnTag ||
+    obj.show_cancellation_tag ||
+    obj.showCancellationTag ||
+    obj.is_refunded ||
+    obj.isRefunded
+  );
+  if (refundQty === 0 && hasRefundFlag && finalQty > 0) {
+    refundQty = finalQty;
+  }
+
   return {
     name: name || '',
     sku: sku || '',
     quantity: finalQty || 0,
     unit_price: finalUnitPrice || 0,
     subtotal: finalSubtotal || 0,
+    refund_qty: refundQty || 0,
+    refund_status: deriveRefundStatus(finalQty, refundQty, hasRefundFlag),
     _line_ref: lineRef !== undefined && lineRef !== null && lineRef !== '' ? String(lineRef) : ''
   };
 }
@@ -1093,7 +1140,9 @@ function extractItemsFromOrderItemList(orderItems) {
         sku: firstPresent(primaryChild.sku, parent.sku),
         quantity: firstNumeric(primaryChild.quantity, parent.quantity, 0) || 0,
         unit_price: firstNumeric(primaryChild.unit_price, parent.unit_price, 0) || 0,
-        subtotal: firstNumeric(parent.subtotal, primaryChild.subtotal, 0) || 0
+        subtotal: firstNumeric(parent.subtotal, primaryChild.subtotal, 0) || 0,
+        refund_qty: firstNumeric(primaryChild.refund_qty, 0) || 0,
+        refund_status: firstPresent(primaryChild.refund_status, '')
       };
 
       if (!merged.unit_price && merged.quantity && merged.subtotal) {
@@ -1174,6 +1223,9 @@ function mapFeeKey(key) {
   }
   if (has('voucher_from_seller', 'voucher_toko', 'seller_voucher', 'voucher_toko_yang_ditanggung_penjual', 'voucher_penjual')) {
     return 'voucher_from_seller';
+  }
+  if (has('refund_amount', 'returned_amount', 'refund_total', 'pengembalian_dana', 'jumlah_pengembalian_dana', 'refund_to_buyer')) {
+    return 'refund_amount';
   }
   if (has('coin', 'koin')) {
     return 'coins';
@@ -1844,7 +1896,38 @@ function processEscrowDetail(body) {
     sku: item.model_name || item.variation || item.sku || '',
     quantity: item.quantity || item.amount || item.qty || 0,
     unit_price: item.item_price || item.product_price || item.price || 0,
-    subtotal: item.subtotal || (item.quantity || 0) * (item.item_price || item.price || 0)
+    subtotal: item.subtotal || (item.quantity || 0) * (item.item_price || item.price || 0),
+    refund_qty: firstNumeric(
+      item.refunded_qty,
+      item.refund_qty,
+      item.returned_qty,
+      item.return_qty,
+      item.cancelled_qty,
+      item.canceled_qty,
+      item.cancel_qty,
+      0
+    ) || 0,
+    refund_status: deriveRefundStatus(
+      item.quantity || item.amount || item.qty || 0,
+      firstNumeric(
+        item.refunded_qty,
+        item.refund_qty,
+        item.returned_qty,
+        item.return_qty,
+        item.cancelled_qty,
+        item.canceled_qty,
+        item.cancel_qty,
+        0
+      ) || 0,
+      Boolean(
+        item.show_return_tag ||
+        item.showReturnTag ||
+        item.show_cancellation_tag ||
+        item.showCancellationTag ||
+        item.is_refunded ||
+        item.isRefunded
+      )
+    )
   }));
 
   capturedOrders[orderId].total_quantity = items.reduce((sum, i) => sum + (i.quantity || i.amount || i.qty || 0), 0);
@@ -2165,7 +2248,38 @@ function flattenOrderDetail(detail) {
       sku: item.model_name || item.variation || '',
       quantity: item.quantity || item.amount || 0,
       unit_price: item.item_price || item.product_price || 0,
-      subtotal: (item.quantity || 0) * (item.item_price || item.product_price || 0)
+      subtotal: (item.quantity || 0) * (item.item_price || item.product_price || 0),
+      refund_qty: firstNumeric(
+        item.refunded_qty,
+        item.refund_qty,
+        item.returned_qty,
+        item.return_qty,
+        item.cancelled_qty,
+        item.canceled_qty,
+        item.cancel_qty,
+        0
+      ) || 0,
+      refund_status: deriveRefundStatus(
+        item.quantity || item.amount || 0,
+        firstNumeric(
+          item.refunded_qty,
+          item.refund_qty,
+          item.returned_qty,
+          item.return_qty,
+          item.cancelled_qty,
+          item.canceled_qty,
+          item.cancel_qty,
+          0
+        ) || 0,
+        Boolean(
+          item.show_return_tag ||
+          item.showReturnTag ||
+          item.show_cancellation_tag ||
+          item.showCancellationTag ||
+          item.is_refunded ||
+          item.isRefunded
+        )
+      )
     }));
     result.total_quantity = items.reduce((sum, i) => sum + (i.quantity || i.amount || 0), 0);
   }
@@ -2473,6 +2587,7 @@ function isOrderHydrated(order) {
     'service_fee',
     'transaction_fee',
     'shipping_fee',
+    'refund_amount',
     'voucher_from_shopee',
     'voucher_from_seller',
     'buyer_shipping_fee',
@@ -2523,9 +2638,12 @@ const EXPORT_HEADERS = [
   'Quantity',
   'Unit Price',
   'Product Subtotal',
+  'Refund Status',
+  'Refund Qty',
   'Item Details',
   'Total Quantity',
   'Order Total (Rp)',
+  'Refund Amount (Rp)',
   'Admin Fee (Rp)',
   'Service Fee (Rp)',
   'Transaction Fee (Rp)',
@@ -2615,7 +2733,12 @@ function buildExportRows() {
       const qty = item.quantity ?? '';
       const price = item.unit_price ?? '';
       const subtotal = item.subtotal ?? '';
-      const itemDetail = `${name}${sku} x${qty} @${price} = ${subtotal}`;
+      const refundStatus = item.refund_status || '';
+      const refundQty = refundStatus ? (item.refund_qty ?? '') : '';
+      const refundSuffix = refundStatus
+        ? ` | ${refundStatus}${refundQty ? ` x${refundQty}` : ''}`
+        : '';
+      const itemDetail = `${name}${sku} x${qty} @${price} = ${subtotal}${refundSuffix}`;
       const isFirst = index === 0;
       const createdText = isFirst ? (order.create_time || '') : '';
 
@@ -2634,9 +2757,12 @@ function buildExportRows() {
         'Quantity': item.quantity ?? '',
         'Unit Price': item.unit_price ?? '',
         'Product Subtotal': item.subtotal ?? '',
+        'Refund Status': item.refund_status || '',
+        'Refund Qty': item.refund_qty ?? '',
         'Item Details': itemDetail,
         'Total Quantity': isFirst ? (order.total_quantity || '') : '',
         'Order Total (Rp)': isFirst ? firstPresent(order.total_amount, order.order_total, order.order_income) : '',
+        'Refund Amount (Rp)': isFirst ? (order.refund_amount || '') : '',
         'Admin Fee (Rp)': isFirst ? (order.admin_fee || '') : '',
         'Service Fee (Rp)': isFirst ? (order.service_fee || '') : '',
         'Transaction Fee (Rp)': isFirst ? (order.transaction_fee || '') : '',
