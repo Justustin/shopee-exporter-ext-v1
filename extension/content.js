@@ -13,15 +13,24 @@ window.addEventListener('message', (event) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== 'COLLECT_INCOME_LINKS') {
-    return;
+  if (message?.type === 'COLLECT_INCOME_LINKS') {
+    collectIncomeLinkData(message.timeoutMs || 12000)
+      .then((payload) => sendResponse(payload))
+      .catch(() => sendResponse({ links: [] }));
+
+    return true;
   }
 
-  collectIncomeLinkData(message.timeoutMs || 12000)
-    .then((payload) => sendResponse(payload))
-    .catch(() => sendResponse({ links: [] }));
+  if (message?.type === 'GET_STORE_CONTEXT') {
+    try {
+      sendResponse(extractStoreContextFromDom());
+    } catch {
+      sendResponse({ storeKey: '', storeName: '', source: '' });
+    }
+    return true;
+  }
 
-  return true;
+  return;
 });
 
 // Inject the interceptor script into the page context
@@ -84,4 +93,90 @@ function normalizeIncomeDetailUrl(href) {
   } catch {
     return '';
   }
+}
+
+function extractStoreContextFromDom() {
+  const html = document.documentElement?.innerHTML || '';
+  const title = document.title || '';
+  const scriptText = Array.from(document.scripts || [])
+    .map((script) => script.textContent || '')
+    .join('\n');
+  const haystack = `${scriptText}\n${html}`.slice(0, 1500000);
+
+  const shopId = matchFirst(haystack, [
+    /"shop_id"\s*:\s*"?(\d{5,20})"?/i,
+    /"shopId"\s*:\s*"?(\d{5,20})"?/i,
+    /"main_shop_id"\s*:\s*"?(\d{5,20})"?/i,
+    /"shopid"\s*:\s*"?(\d{5,20})"?/i
+  ]);
+
+  const shopName = cleanupStoreName(matchFirst(haystack, [
+    /"shop_name"\s*:\s*"([^"]{1,200})"/i,
+    /"shopName"\s*:\s*"([^"]{1,200})"/i,
+    /"seller_name"\s*:\s*"([^"]{1,200})"/i,
+    /"sellerName"\s*:\s*"([^"]{1,200})"/i
+  ])) || cleanupStoreName(extractStoreNameFromTitle(title));
+
+  if (shopId) {
+    return {
+      storeKey: `shop:${shopId}`,
+      storeName: shopName || '',
+      source: 'shop_id'
+    };
+  }
+
+  if (shopName) {
+    return {
+      storeKey: `name:${normalizeStoreNameKey(shopName)}`,
+      storeName: shopName,
+      source: 'shop_name'
+    };
+  }
+
+  return { storeKey: '', storeName: '', source: '' };
+}
+
+function matchFirst(text, patterns) {
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    if (match && match[1]) {
+      return decodeJsonText(match[1]);
+    }
+  }
+  return '';
+}
+
+function decodeJsonText(value) {
+  return String(value || '')
+    .replace(/\\u0026/g, '&')
+    .replace(/\\u003c/g, '<')
+    .replace(/\\u003e/g, '>')
+    .replace(/\\u002f/g, '/')
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, '\\');
+}
+
+function extractStoreNameFromTitle(title) {
+  const cleaned = String(title || '').trim();
+  if (!cleaned) return '';
+  const parts = cleaned.split('|').map((part) => part.trim()).filter(Boolean);
+  for (const part of parts) {
+    if (/shopee seller/i.test(part)) continue;
+    if (/seller centre|seller center/i.test(part)) continue;
+    return part;
+  }
+  return cleaned;
+}
+
+function cleanupStoreName(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeStoreNameKey(value) {
+  return cleanupStoreName(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
 }

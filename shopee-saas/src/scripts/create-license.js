@@ -17,17 +17,20 @@ function parseArgs(argv) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const durationDays = parseInt(args.days || args.durationDays || '30', 10);
+  const maxStores = parseInt(args.stores || args.maxStores || '', 10);
   const result = await createLicense({
     customerEmail: args.email || '',
     customerName: args.name || '',
     plan: args.plan || 'starter',
     durationDays: Number.isFinite(durationDays) ? durationDays : 30,
     notes: args.notes || '',
+    maxStores: Number.isFinite(maxStores) ? maxStores : null,
   });
 
   console.log('License created');
   console.log(`Key: ${result.licenseKey}`);
   console.log(`Plan: ${result.license.plan}`);
+  console.log(`Max Stores: ${result.license.maxStores}`);
   console.log(`Customer Email: ${result.license.customerEmail || '-'}`);
   console.log(`Expires At: ${result.license.expiresAt || '-'}`);
 }

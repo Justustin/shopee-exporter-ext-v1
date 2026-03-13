@@ -25,6 +25,7 @@ const elements = {
   licenseSummaryText: document.getElementById('licenseSummaryText'),
   licensePlanText: document.getElementById('licensePlanText'),
   licenseCustomerText: document.getElementById('licenseCustomerText'),
+  licenseStoreText: document.getElementById('licenseStoreText'),
   licenseExpiryText: document.getElementById('licenseExpiryText'),
   licenseVerifiedText: document.getElementById('licenseVerifiedText'),
   settingsLink: document.getElementById('settingsLink')
@@ -210,8 +211,13 @@ function renderLicense(license) {
   const disableExport = status.syncInFlight || (status.orderCount || 0) === 0;
 
   elements.licenseSummaryText.textContent = offlineGrace ? 'Offline grace' : 'Active';
-  elements.licensePlanText.textContent = license.plan || '-';
+  const maxStores = Number(license.maxStores || 0);
+  const storeCount = Number(license.storeCount || 0);
+  elements.licensePlanText.textContent = license.plan
+    ? `${license.plan}${maxStores > 0 ? ` (${storeCount}/${maxStores} stores)` : ''}`
+    : '-';
   elements.licenseCustomerText.textContent = license.customerEmail || license.customerName || '-';
+  elements.licenseStoreText.textContent = snapshot.status?.storeContext?.storeName || snapshot.status?.storeContext?.storeKey || '-';
   elements.licenseExpiryText.textContent = formatIsoDate(license.expiresAt) || 'No expiry';
   elements.licenseVerifiedText.textContent = formatTimestamp(license.lastVerifiedAt) || 'Never';
 

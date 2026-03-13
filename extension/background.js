@@ -114,6 +114,7 @@ let requestTemplates = {};
 let webRequestCaptureInitialized = false;
 let observedApiEndpoints = {};
 let licenseState = createDefaultLicenseState();
+let currentStoreContext = createDefaultStoreContext();
 
 chrome.identity.getProfileUserInfo((info) => {
   if (info) {
@@ -152,7 +153,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 // Restore from storage on service worker start
-chrome.storage.local.get(['capturedOrders', 'requestTemplates', 'licenseState'], (result) => {
+chrome.storage.local.get(['capturedOrders', 'requestTemplates', 'licenseState', 'currentStoreContext'], (result) => {
   if (result.capturedOrders) {
     capturedOrders = result.capturedOrders;
     console.log(`[Shopee Exporter] Restored ${Object.keys(capturedOrders).length} orders from storage`);
@@ -161,6 +162,7 @@ chrome.storage.local.get(['capturedOrders', 'requestTemplates', 'licenseState'],
     requestTemplates = result.requestTemplates;
   }
   licenseState = normalizeLicenseState(result.licenseState);
+  currentStoreContext = normalizeStoreContext(result.currentStoreContext);
 });
 
 // Debounced save to storage
@@ -188,12 +190,33 @@ function createDefaultLicenseState(overrides = {}) {
     active: false,
     status: 'missing',
     plan: '',
+    maxStores: 0,
+    storeCount: 0,
+    boundStores: [],
     customerEmail: '',
     customerName: '',
     expiresAt: '',
     lastVerifiedAt: 0,
     lastError: ''
   }, overrides || {});
+}
+
+function createDefaultStoreContext(overrides = {}) {
+  return Object.assign({
+    storeKey: '',
+    storeName: '',
+    source: '',
+    detectedAt: 0
+  }, overrides || {});
+}
+
+function normalizeStoreContext(raw) {
+  return createDefaultStoreContext({
+    storeKey: String(raw?.storeKey || '').trim(),
+    storeName: String(raw?.storeName || '').trim(),
+    source: String(raw?.source || '').trim(),
+    detectedAt: toNumberOrNull(raw?.detectedAt) || 0
+  });
 }
 
 function normalizeLicenseApiBaseUrl(value) {
@@ -209,6 +232,9 @@ function normalizeLicenseState(raw) {
     active: Boolean(raw?.active),
     status: String(raw?.status || 'missing'),
     plan: String(raw?.plan || ''),
+    maxStores: toNumberOrNull(raw?.maxStores) || 0,
+    storeCount: toNumberOrNull(raw?.storeCount) || 0,
+    boundStores: Array.isArray(raw?.boundStores) ? raw.boundStores : [],
     customerEmail: String(raw?.customerEmail || ''),
     customerName: String(raw?.customerName || ''),
     expiresAt: String(raw?.expiresAt || ''),
@@ -223,6 +249,9 @@ function getPublicLicenseState() {
     status: licenseState.status || 'missing',
     hasKey: Boolean(licenseState.key),
     plan: licenseState.plan || '',
+    maxStores: toNumberOrNull(licenseState.maxStores) || 0,
+    storeCount: toNumberOrNull(licenseState.storeCount) || 0,
+    boundStores: Array.isArray(licenseState.boundStores) ? licenseState.boundStores : [],
     customerEmail: licenseState.customerEmail || '',
     customerName: licenseState.customerName || '',
     expiresAt: licenseState.expiresAt || '',
@@ -236,6 +265,11 @@ function getPublicLicenseState() {
 
 async function saveLicenseState() {
   await chrome.storage.local.set({ licenseState });
+  notifyPopup();
+}
+
+async function saveStoreContext() {
+  await chrome.storage.local.set({ currentStoreContext });
   notifyPopup();
 }
 
@@ -264,6 +298,88 @@ async function ensureInstallationId() {
   return generated;
 }
 
+function buildStoreKey(shopId, shopName) {
+  const normalizedShopId = normalizeEntityIdValue(shopId, { allowAlpha: false, minLength: 5, maxLength: 20 });
+  if (normalizedShopId) {
+    return `shop:${normalizedShopId}`;
+  }
+  const normalizedName = String(shopName || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  if (normalizedName) {
+    return `name:${normalizedName}`;
+  }
+  return '';
+}
+
+function deriveStoreContextFromOrder(order) {
+  const shopName = String(order?.shop_name || '').trim();
+  const shopId = firstPresent(order?.shop_id, order?.store_id, order?.seller_id, '');
+  const storeKey = buildStoreKey(shopId, shopName);
+  if (!storeKey) return null;
+  return normalizeStoreContext({
+    storeKey,
+    storeName: shopName,
+    source: shopId ? 'order_shop_id' : 'order_shop_name',
+    detectedAt: Date.now()
+  });
+}
+
+function inferStoreContextFromCapturedOrders() {
+  const candidateMap = new Map();
+  for (const order of Object.values(capturedOrders)) {
+    const candidate = deriveStoreContextFromOrder(order);
+    if (!candidate?.storeKey) continue;
+    const existing = candidateMap.get(candidate.storeKey) || { count: 0, storeName: candidate.storeName, source: candidate.source };
+    existing.count += 1;
+    if (!existing.storeName && candidate.storeName) {
+      existing.storeName = candidate.storeName;
+    }
+    candidateMap.set(candidate.storeKey, existing);
+  }
+
+  let bestKey = '';
+  let bestCount = 0;
+  let best = null;
+  for (const [storeKey, entry] of candidateMap.entries()) {
+    if (entry.count <= bestCount) continue;
+    bestKey = storeKey;
+    bestCount = entry.count;
+    best = entry;
+  }
+
+  if (!bestKey || !best) return null;
+  return normalizeStoreContext({
+    storeKey: bestKey,
+    storeName: best.storeName || '',
+    source: best.source || 'captured_orders',
+    detectedAt: Date.now()
+  });
+}
+
+async function updateCurrentStoreContext(nextContext) {
+  const normalized = normalizeStoreContext(nextContext);
+  if (!normalized.storeKey) return currentStoreContext;
+  if (
+    normalized.storeKey === currentStoreContext.storeKey &&
+    normalized.storeName === currentStoreContext.storeName &&
+    normalized.source === currentStoreContext.source
+  ) {
+    currentStoreContext = normalizeStoreContext({
+      ...currentStoreContext,
+      detectedAt: normalized.detectedAt || Date.now()
+    });
+    await saveStoreContext();
+    return currentStoreContext;
+  }
+
+  currentStoreContext = normalized;
+  await saveStoreContext();
+  return currentStoreContext;
+}
+
 function normalizeLicenseKey(value) {
   return String(value || '')
     .trim()
@@ -282,14 +398,15 @@ async function fetchWithTimeout(url, init, timeoutMs = 12000) {
   }
 }
 
-async function verifyLicenseWithServer(licenseKey, apiBaseUrl) {
-  const installationId = await ensureInstallationId();
+async function verifyLicenseWithServer(licenseKey, apiBaseUrl, storeContext = null) {
+  const context = normalizeStoreContext(storeContext);
   const response = await fetchWithTimeout(`${apiBaseUrl}/api/license/verify`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       licenseKey,
-      installationId,
+      storeKey: context.storeKey || '',
+      storeName: context.storeName || '',
       buildTag: BUILD_TAG,
       profileEmail: profileInfo.email || ''
     })
@@ -328,19 +445,36 @@ async function ensureLicenseActive(options = {}) {
   }
 
   try {
-    const remoteLicense = await verifyLicenseWithServer(licenseState.key, apiBaseUrl);
+    const storeContext = await detectActiveStoreContext();
+    if (!storeContext.storeKey) {
+      licenseState = normalizeLicenseState({
+        ...licenseState,
+        apiBaseUrl,
+        active: false,
+        status: 'store_required',
+        lastError: 'Open a Shopee Seller page so the extension can identify the store.'
+      });
+      await saveLicenseState();
+      return licenseState;
+    }
+
+    const remoteLicense = await verifyLicenseWithServer(licenseState.key, apiBaseUrl, storeContext);
     licenseState = normalizeLicenseState({
       ...licenseState,
       apiBaseUrl,
       active: true,
       status: 'active',
       plan: remoteLicense.plan || '',
+      maxStores: remoteLicense.maxStores || 0,
+      storeCount: remoteLicense.storeCount || 0,
+      boundStores: Array.isArray(remoteLicense.boundStores) ? remoteLicense.boundStores : [],
       customerEmail: remoteLicense.customerEmail || '',
       customerName: remoteLicense.customerName || '',
       expiresAt: remoteLicense.expiresAt || '',
       lastVerifiedAt: Date.now(),
       lastError: ''
     });
+    await updateCurrentStoreContext(storeContext);
     await saveLicenseState();
     return licenseState;
   } catch (error) {
@@ -369,9 +503,13 @@ async function activateLicense(licenseKey) {
 
   const settings = await getExtensionSettings();
   const apiBaseUrl = normalizeLicenseApiBaseUrl(settings.licenseApiBaseUrl || licenseState.apiBaseUrl || DEFAULT_LICENSE_API_BASE_URL);
+  const storeContext = await detectActiveStoreContext();
+  if (!storeContext.storeKey) {
+    return { ok: false, error: 'Open a Shopee Seller page first so the extension can identify the store.' };
+  }
 
   try {
-    const remoteLicense = await verifyLicenseWithServer(normalizedKey, apiBaseUrl);
+    const remoteLicense = await verifyLicenseWithServer(normalizedKey, apiBaseUrl, storeContext);
     licenseState = normalizeLicenseState({
       ...licenseState,
       key: normalizedKey,
@@ -379,12 +517,16 @@ async function activateLicense(licenseKey) {
       active: true,
       status: 'active',
       plan: remoteLicense.plan || '',
+      maxStores: remoteLicense.maxStores || 0,
+      storeCount: remoteLicense.storeCount || 0,
+      boundStores: Array.isArray(remoteLicense.boundStores) ? remoteLicense.boundStores : [],
       customerEmail: remoteLicense.customerEmail || '',
       customerName: remoteLicense.customerName || '',
       expiresAt: remoteLicense.expiresAt || '',
       lastVerifiedAt: Date.now(),
       lastError: ''
     });
+    await updateCurrentStoreContext(storeContext);
     await saveLicenseState();
     return { ok: true, license: getPublicLicenseState() };
   } catch (error) {
@@ -605,7 +747,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       readyToExport: canExportCsvNow(),
       buildTag: BUILD_TAG,
       profileEmail: profileInfo.email || '',
-      license: getPublicLicenseState()
+      license: getPublicLicenseState(),
+      storeContext: normalizeStoreContext(currentStoreContext)
     });
   }
 
@@ -2575,6 +2718,26 @@ function flattenOrder(item) {
       source.orderSn ||
       source.ordersn ||
       '',
+    shop_id:
+      source.shop_id ||
+      source.shopId ||
+      orderInfo?.shop_id ||
+      orderInfo?.shopId ||
+      orderIncomeInfo?.shop_id ||
+      orderIncomeInfo?.shopId ||
+      source.seller_id ||
+      source.sellerId ||
+      '',
+    shop_name:
+      source.shop_name ||
+      source.shopName ||
+      orderInfo?.shop_name ||
+      orderInfo?.shopName ||
+      orderIncomeInfo?.shop_name ||
+      orderIncomeInfo?.shopName ||
+      source.seller_name ||
+      source.sellerName ||
+      '',
     income_invoice_id: pickIncomeInvoiceId(source),
     buyer_name:
       source.buyer_username ||
@@ -2929,6 +3092,12 @@ function findEntityArrayDeep(node, depth) {
 }
 
 function notifyPopup() {
+  if (!currentStoreContext.storeKey) {
+    const inferred = inferStoreContextFromCapturedOrders();
+    if (inferred?.storeKey) {
+      currentStoreContext = inferred;
+    }
+  }
   chrome.runtime.sendMessage({
     type: 'DATA_UPDATED',
     orderCount: Object.keys(capturedOrders).length
@@ -4840,6 +5009,23 @@ async function findSellerTabForRefresh() {
   return anySellerTab || null;
 }
 
+async function detectActiveStoreContext() {
+  const tab = await findSellerTabForRefresh();
+  if (tab && typeof tab.id === 'number') {
+    const fromTab = await requestStoreContext(tab.id);
+    if (fromTab.storeKey) {
+      return updateCurrentStoreContext(fromTab);
+    }
+  }
+
+  const fromOrders = inferStoreContextFromCapturedOrders();
+  if (fromOrders) {
+    return updateCurrentStoreContext(fromOrders);
+  }
+
+  return normalizeStoreContext(currentStoreContext);
+}
+
 function reloadTab(tabId) {
   return new Promise((resolve) => {
     chrome.tabs.reload(tabId, { bypassCache: true }, () => {
@@ -4922,6 +5108,23 @@ function requestIncomeInvoiceLinks(tabId) {
         return;
       }
       resolve(Array.isArray(response?.links) ? response.links : []);
+    });
+  });
+}
+
+function requestStoreContext(tabId) {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { type: 'GET_STORE_CONTEXT' }, (response) => {
+      if (chrome.runtime.lastError) {
+        resolve(createDefaultStoreContext());
+        return;
+      }
+      resolve(normalizeStoreContext({
+        storeKey: response?.storeKey || '',
+        storeName: response?.storeName || '',
+        source: response?.source || '',
+        detectedAt: Date.now()
+      }));
     });
   });
 }

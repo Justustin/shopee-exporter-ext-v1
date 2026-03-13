@@ -20,7 +20,8 @@ router.post('/verify', async (req, res) => {
   try {
     const result = await verifyLicense({
       licenseKey: req.body.licenseKey,
-      installationId: req.body.installationId,
+      storeKey: req.body.storeKey,
+      storeName: req.body.storeName,
       meta: {
         buildTag: req.body.buildTag,
         profileEmail: req.body.profileEmail,
