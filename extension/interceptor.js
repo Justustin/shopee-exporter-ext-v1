@@ -13,6 +13,7 @@
     '/api/v4/order/',
     '/api/v4/accounting/pc/seller_income/',
     '/api/v4/invoice/seller/',
+    '/api/framework/selleraccount/',
     '/api/v2/finance/',
     '/api/v2/order/',
     'get_escrow_detail',

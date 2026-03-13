@@ -12,7 +12,7 @@ const LICENSE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const LICENSE_OFFLINE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_LICENSE_API_BASE_URL = 'http://localhost:3000';
 const SELLER_CDS_VER = '2';
-const BUILD_TAG = '2026-03-13-d';
+const BUILD_TAG = '2026-03-13-e';
 const INVOICE_LIST_URL_FILTER = '*://seller.shopee.co.id/api/v4/invoice/seller/get_invoice_list*';
 const INCOME_REPORT_LIST_URL = 'https://seller.shopee.co.id/api/v4/accounting/pc/seller_income/income_report/get_income_report_list';
 const ACCOUNTING_INCOME_DETAIL_URL = 'https://seller.shopee.co.id/api/v4/accounting/pc/seller_income/income_overview/get_income_detail';
@@ -270,7 +270,9 @@ function getStoreContextScore(raw) {
   if (!context.storeKey) return 0;
 
   let score = context.storeKey.startsWith('shop:') ? 40 : 20;
-  if (context.source === 'shop_id' || context.source === 'shop_name') {
+  if (context.source === 'shop_info_api') {
+    score += 12;
+  } else if (context.source === 'shop_id' || context.source === 'shop_name') {
     score += 10;
   } else if (context.source.startsWith('order_')) {
     score += 5;
@@ -1054,6 +1056,7 @@ function handleInterceptedData(data) {
   if (!data || !data.url) return;
 
   const url = data.url;
+  const isSellerShopInfo = url.includes('/api/framework/selleraccount/shop_info');
   const isAccountingIncomeDetail = url.includes('/api/v4/accounting/pc/seller_income/income_overview/get_income_detail');
   const isOrderIncomeComponents = url.includes('/api/v4/accounting/pc/seller_income/income_detail/get_order_income_components');
   const isIncomeOverviewSummary = url.includes('/api/v4/accounting/pc/seller_income/income_overview/get_income_overviews');
@@ -1061,6 +1064,10 @@ function handleInterceptedData(data) {
   maybeReenableSyncGroup(url);
   recordObservedEndpoint(url, data.body);
   maybeCaptureRequestTemplate(data);
+
+  if (isSellerShopInfo) {
+    processSellerShopInfo(data.body);
+  }
 
   // Handle income list responses
   if (
@@ -1097,6 +1104,23 @@ function handleInterceptedData(data) {
   if (!isIncomeReportList && !isIncomeOverviewSummary && (url.includes('/finance/') || url.includes('/order/') || url.includes('/accounting/') || url.includes('/invoice/'))) {
     processGenericResponse(url, data.body);
   }
+}
+
+function processSellerShopInfo(body) {
+  const payload = body?.data;
+  if (!payload || typeof payload !== 'object') return;
+
+  const shopId = firstPresent(payload.shop_id, payload.main_shop_id, '');
+  const shopName = sanitizeStoreName(firstPresent(payload.name, payload.shop_name, ''));
+  const storeKey = buildStoreKey(shopId, shopName);
+  if (!storeKey) return;
+
+  updateCurrentStoreContext({
+    storeKey,
+    storeName: shopName,
+    source: 'shop_info_api',
+    detectedAt: Date.now()
+  }).catch(() => {});
 }
 
 function maybeReenableSyncGroup(url) {
