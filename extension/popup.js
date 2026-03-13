@@ -27,7 +27,7 @@ let snapshot = {
 refreshStatus();
 
 elements.btnStart.addEventListener('click', async () => {
-  setMessage('info', 'Starting fresh sync...');
+  setMessage('info', 'Refreshing page and starting sync...');
   elements.btnStart.disabled = true;
   elements.btnStart.textContent = 'Starting...';
 

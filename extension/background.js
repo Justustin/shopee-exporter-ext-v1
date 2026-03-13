@@ -390,6 +390,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ ok: false, error: 'Log into Shopee Seller Centre first.' });
           return;
         }
+        await refreshSellerTabBeforeSync();
         await performScheduledSync('fresh-start');
         sendResponse({ ok: true });
       } catch (error) {
@@ -3950,6 +3951,70 @@ function createHiddenTab(url) {
       resolve(tab || null);
     });
   });
+}
+
+function queryTabs(queryInfo) {
+  return new Promise((resolve) => {
+    chrome.tabs.query(queryInfo, (tabs) => {
+      if (chrome.runtime.lastError || !Array.isArray(tabs)) {
+        resolve([]);
+        return;
+      }
+      resolve(tabs);
+    });
+  });
+}
+
+function isSellerTab(tab) {
+  return Boolean(tab && typeof tab.id === 'number' && typeof tab.url === 'string' && tab.url.startsWith('https://seller.shopee.co.id/'));
+}
+
+function isFinanceIncomeTab(tab) {
+  return Boolean(isSellerTab(tab) && typeof tab.url === 'string' && tab.url.includes('/portal/finance/income'));
+}
+
+async function findSellerTabForRefresh() {
+  const activeTabs = await queryTabs({ active: true, currentWindow: true });
+  const activeFinanceTab = activeTabs.find(isFinanceIncomeTab);
+  if (activeFinanceTab) {
+    return activeFinanceTab;
+  }
+  const activeSellerTab = activeTabs.find(isSellerTab);
+  if (activeSellerTab) {
+    return activeSellerTab;
+  }
+
+  const currentWindowTabs = await queryTabs({ currentWindow: true });
+  const financeTab = currentWindowTabs.find(isFinanceIncomeTab);
+  if (financeTab) {
+    return financeTab;
+  }
+  const anySellerTab = currentWindowTabs.find(isSellerTab);
+  return anySellerTab || null;
+}
+
+function reloadTab(tabId) {
+  return new Promise((resolve) => {
+    chrome.tabs.reload(tabId, { bypassCache: true }, () => {
+      if (chrome.runtime.lastError) {
+        console.warn(`[Shopee Exporter] Failed to reload tab ${tabId}`, chrome.runtime.lastError.message);
+      }
+      resolve();
+    });
+  });
+}
+
+async function refreshSellerTabBeforeSync() {
+  const tab = await findSellerTabForRefresh();
+  if (!tab) {
+    return false;
+  }
+
+  console.log(`[Shopee Exporter] Refreshing seller tab before sync: ${tab.url}`);
+  await reloadTab(tab.id);
+  await waitForTabComplete(tab.id, 20000);
+  await sleep(2500);
+  return true;
 }
 
 function updateTabUrl(tabId, url) {
