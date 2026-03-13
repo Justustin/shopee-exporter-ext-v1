@@ -217,7 +217,7 @@ function renderLicense(license) {
     ? `${license.plan}${maxStores > 0 ? ` (${storeCount}/${maxStores} stores)` : ''}`
     : '-';
   elements.licenseCustomerText.textContent = license.customerEmail || license.customerName || '-';
-  elements.licenseStoreText.textContent = snapshot.status?.storeContext?.storeName || snapshot.status?.storeContext?.storeKey || '-';
+  elements.licenseStoreText.textContent = resolveStoreDisplayName(snapshot.status?.storeContext, license);
   elements.licenseExpiryText.textContent = formatIsoDate(license.expiresAt) || 'No expiry';
   elements.licenseVerifiedText.textContent = formatTimestamp(license.lastVerifiedAt) || 'Never';
 
@@ -239,6 +239,27 @@ function deriveStatusText(status) {
     return 'Idle';
   }
   return 'Ready to export';
+}
+
+function resolveStoreDisplayName(storeContext, license) {
+  const context = storeContext || {};
+  if (context.storeName) {
+    return context.storeName;
+  }
+
+  const boundStores = Array.isArray(license?.boundStores) ? license.boundStores : [];
+  if (context.storeKey) {
+    const matched = boundStores.find((store) => store?.storeKey === context.storeKey && store?.storeName);
+    if (matched?.storeName) {
+      return matched.storeName;
+    }
+  }
+
+  if (boundStores.length === 1 && boundStores[0]?.storeName) {
+    return boundStores[0].storeName;
+  }
+
+  return '-';
 }
 
 function buildFilename(kind) {

@@ -12,7 +12,7 @@ const LICENSE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const LICENSE_OFFLINE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_LICENSE_API_BASE_URL = 'http://localhost:3000';
 const SELLER_CDS_VER = '2';
-const BUILD_TAG = '2026-03-13-c';
+const BUILD_TAG = '2026-03-13-d';
 const INVOICE_LIST_URL_FILTER = '*://seller.shopee.co.id/api/v4/invoice/seller/get_invoice_list*';
 const INCOME_REPORT_LIST_URL = 'https://seller.shopee.co.id/api/v4/accounting/pc/seller_income/income_report/get_income_report_list';
 const ACCOUNTING_INCOME_DETAIL_URL = 'https://seller.shopee.co.id/api/v4/accounting/pc/seller_income/income_overview/get_income_detail';
@@ -286,9 +286,11 @@ function getStoreContextScore(raw) {
 function choosePreferredStoreContext(...contexts) {
   let best = createDefaultStoreContext();
   let bestScore = 0;
+  const normalizedContexts = [];
 
   for (const candidate of contexts) {
     const normalized = normalizeStoreContext(candidate);
+    normalizedContexts.push(normalized);
     const score = getStoreContextScore(normalized);
     if (!score) continue;
     if (
@@ -297,6 +299,18 @@ function choosePreferredStoreContext(...contexts) {
     ) {
       best = normalized;
       bestScore = score;
+    }
+  }
+
+  if (bestScore && best.storeKey && !best.storeName) {
+    const namedMatch = normalizedContexts.find((candidate) =>
+      candidate.storeKey === best.storeKey && candidate.storeName
+    );
+    if (namedMatch) {
+      best = normalizeStoreContext({
+        ...best,
+        storeName: namedMatch.storeName
+      });
     }
   }
 

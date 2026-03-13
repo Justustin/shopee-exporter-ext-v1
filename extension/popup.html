@@ -232,6 +232,27 @@
       </div>
     </section>
 
+    <section class="card">
+      <div class="status-row">
+        <div class="status-label">Status</div>
+        <div class="status-value" id="statusText">Idle</div>
+      </div>
+      <div class="status-row">
+        <div class="status-label">Last run</div>
+        <div class="status-value" id="lastRunText">Never</div>
+      </div>
+      <div class="status-row">
+        <div class="status-label">File name</div>
+        <div class="status-value" id="fileNameText">shopee-export-YYYY-MM-DD.xls</div>
+      </div>
+    </section>
+
+    <div class="message" id="messageBox"></div>
+
+    <button class="btn-start hidden" id="btnStart">Start</button>
+    <button class="btn-excel hidden" id="btnExportExcel" disabled>Export Excel</button>
+    <button class="btn-csv hidden" id="btnExportCSV" disabled>Export CSV</button>
+
     <section class="card" id="licenseInactiveView">
       <div class="status-row">
         <div class="status-label">License</div>
@@ -275,27 +296,6 @@
         <button class="btn-soft" id="btnRemoveLicense">Remove License</button>
       </div>
     </section>
-
-    <section class="card">
-      <div class="status-row">
-        <div class="status-label">Status</div>
-        <div class="status-value" id="statusText">Idle</div>
-      </div>
-      <div class="status-row">
-        <div class="status-label">Last run</div>
-        <div class="status-value" id="lastRunText">Never</div>
-      </div>
-      <div class="status-row">
-        <div class="status-label">File name</div>
-        <div class="status-value" id="fileNameText">shopee-export-YYYY-MM-DD.xls</div>
-      </div>
-    </section>
-
-    <div class="message" id="messageBox"></div>
-
-    <button class="btn-start hidden" id="btnStart">Start</button>
-    <button class="btn-excel hidden" id="btnExportExcel" disabled>Export Excel</button>
-    <button class="btn-csv hidden" id="btnExportCSV" disabled>Export CSV</button>
 
     <section class="card footer">
       This popup clears old data and runs a fresh sync when you press <strong>Start</strong>.
