@@ -2,7 +2,8 @@ const DEFAULT_SETTINGS = {
   exportFilenamePrefix: 'shopee-export',
   exportLabel: '',
   includeProfileEmailInFilename: false,
-  autoClearAfterExport: false
+  autoClearAfterExport: false,
+  licenseApiBaseUrl: 'http://localhost:3000'
 };
 
 const elements = {
@@ -15,6 +16,17 @@ const elements = {
   btnStart: document.getElementById('btnStart'),
   btnExportExcel: document.getElementById('btnExportExcel'),
   btnExportCSV: document.getElementById('btnExportCSV'),
+  btnActivate: document.getElementById('btnActivate'),
+  btnRemoveLicense: document.getElementById('btnRemoveLicense'),
+  licenseKeyInput: document.getElementById('licenseKeyInput'),
+  licenseInactiveView: document.getElementById('licenseInactiveView'),
+  licenseActiveView: document.getElementById('licenseActiveView'),
+  licenseStatusText: document.getElementById('licenseStatusText'),
+  licenseSummaryText: document.getElementById('licenseSummaryText'),
+  licensePlanText: document.getElementById('licensePlanText'),
+  licenseCustomerText: document.getElementById('licenseCustomerText'),
+  licenseExpiryText: document.getElementById('licenseExpiryText'),
+  licenseVerifiedText: document.getElementById('licenseVerifiedText'),
   settingsLink: document.getElementById('settingsLink')
 };
 
@@ -25,6 +37,45 @@ let snapshot = {
 };
 
 refreshStatus();
+
+elements.btnActivate.addEventListener('click', async () => {
+  const licenseKey = elements.licenseKeyInput.value.trim();
+  if (!licenseKey) {
+    setMessage('warning', 'Enter the activation key first.');
+    return;
+  }
+
+  setMessage('info', 'Activating license...');
+  elements.btnActivate.disabled = true;
+  elements.btnActivate.textContent = 'Activating...';
+
+  const response = await sendMessage({ type: 'ACTIVATE_LICENSE', licenseKey });
+  await refreshStatus();
+
+  elements.btnActivate.disabled = false;
+  elements.btnActivate.textContent = 'Activate License';
+
+  if (!response || !response.ok) {
+    setMessage('error', response?.error || 'License activation failed.');
+    return;
+  }
+
+  elements.licenseKeyInput.value = '';
+  setMessage('success', 'License activated. Start is now available.');
+});
+
+elements.btnRemoveLicense.addEventListener('click', async () => {
+  setMessage('info', 'Removing stored license...');
+  const response = await sendMessage({ type: 'CLEAR_LICENSE' });
+  await refreshStatus();
+
+  if (!response || !response.ok) {
+    setMessage('error', response?.error || 'Failed to remove stored license.');
+    return;
+  }
+
+  setMessage('success', 'Stored license removed.');
+});
 
 elements.btnStart.addEventListener('click', async () => {
   setMessage('info', 'Refreshing page and starting sync...');
@@ -68,7 +119,7 @@ chrome.runtime.onMessage.addListener((message) => {
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local') return;
-  if (changes.lastSyncMeta || changes.extensionSettings) {
+  if (changes.lastSyncMeta || changes.extensionSettings || changes.licenseState) {
     refreshStatus();
   }
 });
@@ -83,6 +134,7 @@ async function refreshStatus() {
     elements.statusText.textContent = 'Background unavailable';
     elements.btnStart.disabled = false;
     elements.btnStart.textContent = 'Start';
+    renderLicense(null);
     return;
   }
 
@@ -98,11 +150,7 @@ async function refreshStatus() {
   elements.lastRunText.textContent = formatTimestamp(snapshot.lastSyncMeta?.ts);
   elements.fileNameText.textContent = buildFilename('excel');
 
-  const disableExport = status.syncInFlight || (status.orderCount || 0) === 0;
-  elements.btnExportExcel.disabled = disableExport;
-  elements.btnExportCSV.disabled = disableExport;
-  elements.btnStart.disabled = Boolean(status.syncInFlight);
-  elements.btnStart.textContent = status.syncInFlight ? 'Running...' : 'Start';
+  renderLicense(status.license || null);
 }
 
 async function exportData(kind) {
@@ -113,7 +161,7 @@ async function exportData(kind) {
   await refreshStatus();
 
   if (!response || !response.ok) {
-    setMessage('warning', 'Export failed. Press Start again after Shopee finishes loading data.');
+    setMessage('warning', response?.error || 'Export failed. Press Start again after Shopee finishes loading data.');
     return;
   }
 
@@ -140,7 +188,43 @@ async function exportData(kind) {
   setMessage('success', kind === 'excel' ? 'Excel downloaded.' : 'CSV downloaded.');
 }
 
+function renderLicense(license) {
+  const active = Boolean(license?.active);
+
+  elements.licenseInactiveView.classList.toggle('hidden', active);
+  elements.licenseActiveView.classList.toggle('hidden', !active);
+  elements.btnStart.classList.toggle('hidden', !active);
+  elements.btnExportExcel.classList.toggle('hidden', !active);
+  elements.btnExportCSV.classList.toggle('hidden', !active);
+
+  if (!active) {
+    elements.licenseStatusText.textContent = license?.lastError || 'Activation required';
+    elements.btnStart.disabled = true;
+    elements.btnExportExcel.disabled = true;
+    elements.btnExportCSV.disabled = true;
+    return;
+  }
+
+  const status = snapshot.status || {};
+  const offlineGrace = Boolean(license.offlineGraceActive);
+  const disableExport = status.syncInFlight || (status.orderCount || 0) === 0;
+
+  elements.licenseSummaryText.textContent = offlineGrace ? 'Offline grace' : 'Active';
+  elements.licensePlanText.textContent = license.plan || '-';
+  elements.licenseCustomerText.textContent = license.customerEmail || license.customerName || '-';
+  elements.licenseExpiryText.textContent = formatIsoDate(license.expiresAt) || 'No expiry';
+  elements.licenseVerifiedText.textContent = formatTimestamp(license.lastVerifiedAt) || 'Never';
+
+  elements.btnStart.disabled = Boolean(status.syncInFlight);
+  elements.btnStart.textContent = status.syncInFlight ? 'Running...' : 'Start';
+  elements.btnExportExcel.disabled = disableExport;
+  elements.btnExportCSV.disabled = disableExport;
+}
+
 function deriveStatusText(status) {
+  if (!status.license?.active) {
+    return 'Activation required';
+  }
   const remaining = status.remainingInvoiceCount || status.pendingHydrationCount || 0;
   if (status.syncInFlight) {
     return remaining > 0 ? `Running - ${remaining} left` : 'Running';
@@ -190,6 +274,7 @@ function normalizeSettings(raw) {
   settings.exportLabel = String(settings.exportLabel || '').trim();
   settings.includeProfileEmailInFilename = Boolean(settings.includeProfileEmailInFilename);
   settings.autoClearAfterExport = Boolean(settings.autoClearAfterExport);
+  settings.licenseApiBaseUrl = String(settings.licenseApiBaseUrl || DEFAULT_SETTINGS.licenseApiBaseUrl).trim() || DEFAULT_SETTINGS.licenseApiBaseUrl;
   return settings;
 }
 
@@ -198,6 +283,13 @@ function formatTimestamp(ts) {
   const date = new Date(ts);
   if (!Number.isFinite(date.getTime())) return 'Never';
   return date.toLocaleString('id-ID');
+}
+
+function formatIsoDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  return date.toLocaleDateString('id-ID');
 }
 
 function setMessage(type, text) {

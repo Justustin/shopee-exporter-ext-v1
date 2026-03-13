@@ -1,0 +1,123 @@
+<% var title = (store.shop_name || 'Store') + ' - Orders'; %>
+<%- include('_header') %>
+
+<div class="flex-between mb-16">
+  <div>
+    <h2><%= store.shop_name || 'Shop #' + store.shop_id %></h2>
+    <span class="text-muted">Last sync: <%= store.last_sync_at ? new Date(store.last_sync_at).toLocaleString('id-ID') : 'Never' %></span>
+  </div>
+  <div class="flex">
+    <form method="POST" action="/api/stores/<%= store.id %>/sync" style="display:inline">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <button type="submit" class="btn btn-primary" <%= subscription && !subscription.isActive ? 'disabled title="Active subscription required"' : '' %>>Sync Now</button>
+    </form>
+  </div>
+</div>
+
+<% if (banner) { %>
+  <div class="card mb-16" style="border-left:4px solid <%= banner.type === 'success' ? '#4CAF50' : '#E53935' %>">
+    <%= banner.message %>
+  </div>
+<% } %>
+
+<!-- Date filter -->
+<div class="card">
+  <form method="GET" action="/dashboard/store/<%= store.id %>" class="flex">
+    <div class="form-group" style="margin:0">
+      <label>From</label>
+      <input type="date" name="from" value="<%= dateFrom %>">
+    </div>
+    <div class="form-group" style="margin:0">
+      <label>To</label>
+      <input type="date" name="to" value="<%= dateTo %>">
+    </div>
+    <button type="submit" class="btn btn-primary" style="margin-top:18px">Filter</button>
+    <% if (subscription && !subscription.isActive) { %>
+      <button type="button" class="btn btn-success" style="margin-top:18px" disabled title="Active subscription required">Export CSV</button>
+      <button type="button" class="btn btn-blue" style="margin-top:18px" disabled title="Active subscription required">Export Excel</button>
+    <% } else { %>
+      <a href="/api/export/csv?store_id=<%= store.id %>&date_from=<%= dateFrom %>&date_to=<%= dateTo %>" class="btn btn-success" style="margin-top:18px">Export CSV</a>
+      <a href="/api/export/excel?store_id=<%= store.id %>&date_from=<%= dateFrom %>&date_to=<%= dateTo %>" class="btn btn-blue" style="margin-top:18px">Export Excel</a>
+    <% } %>
+  </form>
+</div>
+
+<!-- Summary cards -->
+<div class="grid mb-16">
+  <div class="card stat">
+    <div class="value"><%= summary.orderCount %></div>
+    <div class="label">Orders</div>
+  </div>
+  <div class="card stat">
+    <div class="value" style="font-size:18px">Rp <%= Number(summary.orderTotal || 0).toLocaleString('id-ID') %></div>
+    <div class="label">Order Total</div>
+  </div>
+  <div class="card stat">
+    <div class="value" style="font-size:18px;color:#e53935">Rp <%= Number(summary.totalFees || 0).toLocaleString('id-ID') %></div>
+    <div class="label">Total Fees</div>
+  </div>
+  <div class="card stat">
+    <div class="value" style="font-size:18px;color:#4caf50">Rp <%= Number(summary.netIncome || 0).toLocaleString('id-ID') %></div>
+    <div class="label">Net Income</div>
+  </div>
+</div>
+
+<!-- Fee breakdown -->
+<div class="card mb-16">
+  <h3 style="margin-bottom:12px">Fee Breakdown</h3>
+  <table>
+    <tr><td>Admin/Commission Fee</td><td class="money">Rp <%= Number(summary.adminFee || 0).toLocaleString('id-ID') %></td></tr>
+    <tr><td>Service Fee</td><td class="money">Rp <%= Number(summary.serviceFee || 0).toLocaleString('id-ID') %></td></tr>
+    <tr><td>Transaction Fee</td><td class="money">Rp <%= Number(summary.transactionFee || 0).toLocaleString('id-ID') %></td></tr>
+    <tr><td>Shipping Fee</td><td class="money">Rp <%= Number(summary.shippingFee || 0).toLocaleString('id-ID') %></td></tr>
+    <tr><td>Voucher (Shopee)</td><td class="money">Rp <%= Number(summary.voucherShopee || 0).toLocaleString('id-ID') %></td></tr>
+    <tr><td>Voucher (Seller)</td><td class="money">Rp <%= Number(summary.voucherSeller || 0).toLocaleString('id-ID') %></td></tr>
+    <tr><td>Coins</td><td class="money">Rp <%= Number(summary.coins || 0).toLocaleString('id-ID') %></td></tr>
+    <tr style="font-weight:700;border-top:2px solid #333"><td>Net Income</td><td class="money">Rp <%= Number(summary.netIncome || 0).toLocaleString('id-ID') %></td></tr>
+  </table>
+</div>
+
+<!-- Orders table -->
+<div class="card">
+  <h3 style="margin-bottom:12px">Orders (<%= orders.length %>)</h3>
+  <div class="overflow-x">
+    <table>
+      <thead>
+        <tr>
+          <th>Order SN</th>
+          <th>Date</th>
+          <th>Buyer</th>
+          <th>Status</th>
+          <th>Items</th>
+          <th class="text-right">Order Total</th>
+          <th class="text-right">Admin Fee</th>
+          <th class="text-right">Service Fee</th>
+          <th class="text-right">Txn Fee</th>
+          <th class="text-right">Shipping</th>
+          <th class="text-right">Net Income</th>
+          <th>Escrow</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% for (const o of orders) { %>
+          <tr>
+            <td style="font-family:monospace;font-size:12px"><%= o.order_sn %></td>
+            <td style="white-space:nowrap"><%= o.create_time ? new Date(o.create_time).toLocaleDateString('id-ID') : '' %></td>
+            <td><%= o.buyer_name || '' %></td>
+            <td><%= o.order_status || '' %></td>
+            <td><%= o.total_quantity || 0 %></td>
+            <td class="money"><%= Number(o.order_total || 0).toLocaleString('id-ID') %></td>
+            <td class="money"><%= Number(o.admin_fee || 0).toLocaleString('id-ID') %></td>
+            <td class="money"><%= Number(o.service_fee || 0).toLocaleString('id-ID') %></td>
+            <td class="money"><%= Number(o.transaction_fee || 0).toLocaleString('id-ID') %></td>
+            <td class="money"><%= Number(o.shipping_fee || 0).toLocaleString('id-ID') %></td>
+            <td class="money" style="font-weight:600"><%= Number(o.net_income || 0).toLocaleString('id-ID') %></td>
+            <td><%= o.escrow_synced ? 'Y' : '-' %></td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('_footer') %>

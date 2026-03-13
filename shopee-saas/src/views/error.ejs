@@ -1,0 +1,10 @@
+<% var title = 'Error'; %>
+<%- include('_header') %>
+
+<div class="card" style="text-align:center;padding:40px">
+  <h2 style="margin-bottom:12px">Something went wrong</h2>
+  <p><%= typeof message !== 'undefined' ? message : 'An unexpected error occurred' %></p>
+  <a href="/dashboard" class="btn btn-primary mt-16">Back to Dashboard</a>
+</div>
+
+<%- include('_footer') %>

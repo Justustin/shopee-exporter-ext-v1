@@ -2,7 +2,8 @@ const DEFAULT_SETTINGS = {
   exportFilenamePrefix: 'shopee-export',
   exportLabel: '',
   includeProfileEmailInFilename: false,
-  autoClearAfterExport: false
+  autoClearAfterExport: false,
+  licenseApiBaseUrl: 'http://localhost:3000'
 };
 
 const form = document.getElementById('settingsForm');
@@ -14,7 +15,8 @@ const fields = {
   exportFilenamePrefix: document.getElementById('exportFilenamePrefix'),
   exportLabel: document.getElementById('exportLabel'),
   includeProfileEmailInFilename: document.getElementById('includeProfileEmailInFilename'),
-  autoClearAfterExport: document.getElementById('autoClearAfterExport')
+  autoClearAfterExport: document.getElementById('autoClearAfterExport'),
+  licenseApiBaseUrl: document.getElementById('licenseApiBaseUrl')
 };
 
 loadSettings();
@@ -54,7 +56,8 @@ function readSettingsFromForm() {
     exportFilenamePrefix: fields.exportFilenamePrefix.value,
     exportLabel: fields.exportLabel.value,
     includeProfileEmailInFilename: fields.includeProfileEmailInFilename.checked,
-    autoClearAfterExport: fields.autoClearAfterExport.checked
+    autoClearAfterExport: fields.autoClearAfterExport.checked,
+    licenseApiBaseUrl: fields.licenseApiBaseUrl.value
   });
 }
 
@@ -63,6 +66,7 @@ function applySettings(settings) {
   fields.exportLabel.value = settings.exportLabel;
   fields.includeProfileEmailInFilename.checked = settings.includeProfileEmailInFilename;
   fields.autoClearAfterExport.checked = settings.autoClearAfterExport;
+  fields.licenseApiBaseUrl.value = settings.licenseApiBaseUrl;
 }
 
 function updatePreview() {
@@ -76,6 +80,7 @@ function normalizeSettings(raw) {
   settings.exportLabel = String(settings.exportLabel || '').trim();
   settings.includeProfileEmailInFilename = Boolean(settings.includeProfileEmailInFilename);
   settings.autoClearAfterExport = Boolean(settings.autoClearAfterExport);
+  settings.licenseApiBaseUrl = String(settings.licenseApiBaseUrl || DEFAULT_SETTINGS.licenseApiBaseUrl).trim() || DEFAULT_SETTINGS.licenseApiBaseUrl;
   return settings;
 }
 

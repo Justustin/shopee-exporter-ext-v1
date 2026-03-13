@@ -1,0 +1,61 @@
+<% var title = 'Dashboard'; %>
+<%- include('_header') %>
+
+<div class="flex-between mb-16">
+  <h2>Your Stores</h2>
+  <% if (subscription && !subscription.isActive) { %>
+    <button class="btn btn-primary" disabled title="Active subscription required">+ Connect Store</button>
+  <% } else { %>
+    <a href="/shopee/auth/initiate" class="btn btn-primary">+ Connect Store</a>
+  <% } %>
+</div>
+
+<% if (typeof error !== 'undefined' && error) { %>
+  <div class="alert alert-error"><%= error %></div>
+<% } %>
+<% if (typeof success !== 'undefined' && success) { %>
+  <div class="alert alert-success"><%= success %></div>
+<% } %>
+<% if (subscription) { %>
+  <div class="card">
+    Plan: <strong><%= subscription.plan %></strong> |
+    Status: <strong style="color:<%= subscription.isActive ? '#2e7d32' : '#c62828' %>"><%= subscription.isActive ? 'active' : 'expired' %></strong>
+    <% if (subscription.plan === 'trial' && subscription.trial_ends_at) { %>
+      | Trial ends: <strong><%= new Date(subscription.trial_ends_at).toLocaleDateString('id-ID') %></strong>
+    <% } else if (subscription.paid_until) { %>
+      | Paid until: <strong><%= new Date(subscription.paid_until).toLocaleDateString('id-ID') %></strong>
+    <% } %>
+  </div>
+<% } %>
+
+<% if (stores.length === 0) { %>
+  <div class="card" style="text-align:center;padding:40px">
+    <p style="margin-bottom:16px;color:#999">No stores connected yet</p>
+    <% if (subscription && !subscription.isActive) { %>
+      <button class="btn btn-primary" disabled title="Active subscription required">Connect Your First Shopee Store</button>
+    <% } else { %>
+      <a href="/shopee/auth/initiate" class="btn btn-primary">Connect Your First Shopee Store</a>
+    <% } %>
+  </div>
+<% } else { %>
+  <div class="grid">
+    <% for (const store of stores) { %>
+      <a href="/dashboard/store/<%= store.id %>" class="card" style="text-decoration:none;color:inherit">
+        <h3 style="margin-bottom:8px"><%= store.shop_name || 'Shop #' + store.shop_id %></h3>
+        <div class="stat">
+          <div class="value"><%= store.order_count || 0 %></div>
+          <div class="label">orders this month</div>
+        </div>
+        <div class="stat mt-16">
+          <div class="value" style="font-size:20px">Rp <%= Number(store.net_income_total || 0).toLocaleString('id-ID') %></div>
+          <div class="label">net income this month</div>
+        </div>
+        <div class="text-muted mt-16">
+          Last sync: <%= store.last_sync_at ? new Date(store.last_sync_at).toLocaleString('id-ID') : 'Never' %>
+        </div>
+      </a>
+    <% } %>
+  </div>
+<% } %>
+
+<%- include('_footer') %>

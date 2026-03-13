@@ -8,8 +8,11 @@ const MONITOR_URLS = [
 ];
 const HIDDEN_INVOICE_VISIT_LIMIT = 12;
 const HIDDEN_PAGE_SETTLE_MS = 2500;
+const LICENSE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const LICENSE_OFFLINE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_LICENSE_API_BASE_URL = 'http://localhost:3000';
 const SELLER_CDS_VER = '2';
-const BUILD_TAG = '2026-03-13-a';
+const BUILD_TAG = '2026-03-13-b';
 const INVOICE_LIST_URL_FILTER = '*://seller.shopee.co.id/api/v4/invoice/seller/get_invoice_list*';
 const INCOME_REPORT_LIST_URL = 'https://seller.shopee.co.id/api/v4/accounting/pc/seller_income/income_report/get_income_report_list';
 const ACCOUNTING_INCOME_DETAIL_URL = 'https://seller.shopee.co.id/api/v4/accounting/pc/seller_income/income_overview/get_income_detail';
@@ -110,6 +113,7 @@ let profileInfo = { email: '', id: '' };
 let requestTemplates = {};
 let webRequestCaptureInitialized = false;
 let observedApiEndpoints = {};
+let licenseState = createDefaultLicenseState();
 
 chrome.identity.getProfileUserInfo((info) => {
   if (info) {
@@ -148,7 +152,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 // Restore from storage on service worker start
-chrome.storage.local.get(['capturedOrders', 'requestTemplates'], (result) => {
+chrome.storage.local.get(['capturedOrders', 'requestTemplates', 'licenseState'], (result) => {
   if (result.capturedOrders) {
     capturedOrders = result.capturedOrders;
     console.log(`[Shopee Exporter] Restored ${Object.keys(capturedOrders).length} orders from storage`);
@@ -156,6 +160,7 @@ chrome.storage.local.get(['capturedOrders', 'requestTemplates'], (result) => {
   if (result.requestTemplates && typeof result.requestTemplates === 'object') {
     requestTemplates = result.requestTemplates;
   }
+  licenseState = normalizeLicenseState(result.licenseState);
 });
 
 // Debounced save to storage
@@ -173,6 +178,235 @@ async function clearCapturedData() {
   await chrome.storage.local.remove('capturedOrders');
   updateBadge();
   notifyPopup();
+}
+
+function createDefaultLicenseState(overrides = {}) {
+  return Object.assign({
+    installationId: '',
+    key: '',
+    apiBaseUrl: DEFAULT_LICENSE_API_BASE_URL,
+    active: false,
+    status: 'missing',
+    plan: '',
+    customerEmail: '',
+    customerName: '',
+    expiresAt: '',
+    lastVerifiedAt: 0,
+    lastError: ''
+  }, overrides || {});
+}
+
+function normalizeLicenseApiBaseUrl(value) {
+  const raw = String(value || DEFAULT_LICENSE_API_BASE_URL).trim() || DEFAULT_LICENSE_API_BASE_URL;
+  return raw.replace(/\/+$/, '');
+}
+
+function normalizeLicenseState(raw) {
+  return createDefaultLicenseState({
+    installationId: String(raw?.installationId || '').trim(),
+    key: String(raw?.key || '').trim().toUpperCase(),
+    apiBaseUrl: normalizeLicenseApiBaseUrl(raw?.apiBaseUrl || DEFAULT_LICENSE_API_BASE_URL),
+    active: Boolean(raw?.active),
+    status: String(raw?.status || 'missing'),
+    plan: String(raw?.plan || ''),
+    customerEmail: String(raw?.customerEmail || ''),
+    customerName: String(raw?.customerName || ''),
+    expiresAt: String(raw?.expiresAt || ''),
+    lastVerifiedAt: toNumberOrNull(raw?.lastVerifiedAt) || 0,
+    lastError: String(raw?.lastError || '')
+  });
+}
+
+function getPublicLicenseState() {
+  return {
+    active: Boolean(licenseState.active),
+    status: licenseState.status || 'missing',
+    hasKey: Boolean(licenseState.key),
+    plan: licenseState.plan || '',
+    customerEmail: licenseState.customerEmail || '',
+    customerName: licenseState.customerName || '',
+    expiresAt: licenseState.expiresAt || '',
+    lastVerifiedAt: licenseState.lastVerifiedAt || 0,
+    lastError: licenseState.lastError || '',
+    apiBaseUrl: normalizeLicenseApiBaseUrl(licenseState.apiBaseUrl || DEFAULT_LICENSE_API_BASE_URL),
+    installationId: licenseState.installationId || '',
+    offlineGraceActive: licenseState.status === 'offline_grace'
+  };
+}
+
+async function saveLicenseState() {
+  await chrome.storage.local.set({ licenseState });
+  notifyPopup();
+}
+
+async function getExtensionSettings() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get('extensionSettings', (result) => {
+      resolve(result.extensionSettings || {});
+    });
+  });
+}
+
+async function ensureInstallationId() {
+  if (licenseState.installationId) {
+    return licenseState.installationId;
+  }
+
+  const generated = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  licenseState = normalizeLicenseState({
+    ...licenseState,
+    installationId: generated
+  });
+  await saveLicenseState();
+  return generated;
+}
+
+function normalizeLicenseKey(value) {
+  return String(value || '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '')
+    .replace(/[^A-Z0-9-]/g, '');
+}
+
+async function fetchWithTimeout(url, init, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function verifyLicenseWithServer(licenseKey, apiBaseUrl) {
+  const installationId = await ensureInstallationId();
+  const response = await fetchWithTimeout(`${apiBaseUrl}/api/license/verify`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      licenseKey,
+      installationId,
+      buildTag: BUILD_TAG,
+      profileEmail: profileInfo.email || ''
+    })
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload?.ok || !payload.license) {
+    throw new Error(payload?.error || payload?.code || `HTTP ${response.status}`);
+  }
+  return payload.license;
+}
+
+async function ensureLicenseActive(options = {}) {
+  const forceFresh = Boolean(options.forceFresh);
+  const settings = await getExtensionSettings();
+  const apiBaseUrl = normalizeLicenseApiBaseUrl(settings.licenseApiBaseUrl || licenseState.apiBaseUrl || DEFAULT_LICENSE_API_BASE_URL);
+  licenseState = normalizeLicenseState({ ...licenseState, apiBaseUrl });
+
+  if (!licenseState.key) {
+    licenseState = normalizeLicenseState({
+      ...licenseState,
+      active: false,
+      status: 'missing',
+      lastError: ''
+    });
+    await saveLicenseState();
+    return licenseState;
+  }
+
+  const isFresh = licenseState.active &&
+    licenseState.lastVerifiedAt &&
+    (Date.now() - licenseState.lastVerifiedAt) < LICENSE_CACHE_TTL_MS;
+
+  if (!forceFresh && isFresh) {
+    return licenseState;
+  }
+
+  try {
+    const remoteLicense = await verifyLicenseWithServer(licenseState.key, apiBaseUrl);
+    licenseState = normalizeLicenseState({
+      ...licenseState,
+      apiBaseUrl,
+      active: true,
+      status: 'active',
+      plan: remoteLicense.plan || '',
+      customerEmail: remoteLicense.customerEmail || '',
+      customerName: remoteLicense.customerName || '',
+      expiresAt: remoteLicense.expiresAt || '',
+      lastVerifiedAt: Date.now(),
+      lastError: ''
+    });
+    await saveLicenseState();
+    return licenseState;
+  } catch (error) {
+    const lastError = String(error?.message || error || 'License verification failed');
+    const offlineGraceValid = licenseState.active &&
+      licenseState.lastVerifiedAt &&
+      (Date.now() - licenseState.lastVerifiedAt) < LICENSE_OFFLINE_GRACE_MS;
+
+    licenseState = normalizeLicenseState({
+      ...licenseState,
+      apiBaseUrl,
+      active: offlineGraceValid,
+      status: offlineGraceValid ? 'offline_grace' : 'invalid',
+      lastError
+    });
+    await saveLicenseState();
+    return licenseState;
+  }
+}
+
+async function activateLicense(licenseKey) {
+  const normalizedKey = normalizeLicenseKey(licenseKey);
+  if (!normalizedKey) {
+    return { ok: false, error: 'Activation key is required.' };
+  }
+
+  const settings = await getExtensionSettings();
+  const apiBaseUrl = normalizeLicenseApiBaseUrl(settings.licenseApiBaseUrl || licenseState.apiBaseUrl || DEFAULT_LICENSE_API_BASE_URL);
+
+  try {
+    const remoteLicense = await verifyLicenseWithServer(normalizedKey, apiBaseUrl);
+    licenseState = normalizeLicenseState({
+      ...licenseState,
+      key: normalizedKey,
+      apiBaseUrl,
+      active: true,
+      status: 'active',
+      plan: remoteLicense.plan || '',
+      customerEmail: remoteLicense.customerEmail || '',
+      customerName: remoteLicense.customerName || '',
+      expiresAt: remoteLicense.expiresAt || '',
+      lastVerifiedAt: Date.now(),
+      lastError: ''
+    });
+    await saveLicenseState();
+    return { ok: true, license: getPublicLicenseState() };
+  } catch (error) {
+    licenseState = normalizeLicenseState({
+      ...licenseState,
+      apiBaseUrl,
+      active: false,
+      status: 'invalid',
+      lastError: String(error?.message || error || 'Activation failed')
+    });
+    await saveLicenseState();
+    return { ok: false, error: licenseState.lastError, license: getPublicLicenseState() };
+  }
+}
+
+async function clearLicenseState() {
+  const installationId = await ensureInstallationId();
+  licenseState = createDefaultLicenseState({
+    installationId,
+    apiBaseUrl: licenseState.apiBaseUrl || DEFAULT_LICENSE_API_BASE_URL
+  });
+  await saveLicenseState();
 }
 
 function initializeNetworkTemplateCapture() {
@@ -370,8 +604,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       remainingInvoiceCount,
       readyToExport: canExportCsvNow(),
       buildTag: BUILD_TAG,
-      profileEmail: profileInfo.email || ''
+      profileEmail: profileInfo.email || '',
+      license: getPublicLicenseState()
     });
+  }
+
+  if (message.type === 'ACTIVATE_LICENSE') {
+    (async () => {
+      try {
+        const result = await activateLicense(message.licenseKey);
+        sendResponse(result);
+      } catch (error) {
+        sendResponse({ ok: false, error: String(error?.message || error) });
+      }
+    })();
+  }
+
+  if (message.type === 'CLEAR_LICENSE') {
+    (async () => {
+      try {
+        await clearLicenseState();
+        sendResponse({ ok: true, license: getPublicLicenseState() });
+      } catch (error) {
+        sendResponse({ ok: false, error: String(error?.message || error) });
+      }
+    })();
   }
 
   if (message.type === 'CLEAR_DATA') {
@@ -384,12 +641,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'START_CAPTURE') {
     (async () => {
       try {
-        await clearCapturedData();
+        const currentLicense = await ensureLicenseActive({ forceFresh: true });
+        if (!currentLicense.active) {
+          sendResponse({ ok: false, error: currentLicense.lastError || 'Activate license first.' });
+          return;
+        }
         const hasSession = await hasSellerSession();
         if (!hasSession) {
           sendResponse({ ok: false, error: 'Log into Shopee Seller Centre first.' });
           return;
         }
+        await clearCapturedData();
         await refreshSellerTabBeforeSync();
         await performScheduledSync('fresh-start');
         sendResponse({ ok: true });
@@ -400,36 +662,69 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'EXPORT_CSV') {
-    if (message.requireReady && !canExportCsvNow()) {
-      sendResponse({
-        ok: false,
-        reason: 'sync_not_ready',
-        syncInFlight,
-        pendingHydrationCount: getPendingHydrationCount()
-      });
-      return;
-    }
-    const csv = generateCSV();
-    sendResponse({ ok: Boolean(csv), csv });
+    const currentLicense = ensureLicenseActive();
+    currentLicense.then((license) => {
+      if (!license.active) {
+        sendResponse({
+          ok: false,
+          reason: 'license_required',
+          error: license.lastError || 'Activate license first.'
+        });
+        return;
+      }
+      if (message.requireReady && !canExportCsvNow()) {
+        sendResponse({
+          ok: false,
+          reason: 'sync_not_ready',
+          syncInFlight,
+          pendingHydrationCount: getPendingHydrationCount()
+        });
+        return;
+      }
+      const csv = generateCSV();
+      sendResponse({ ok: Boolean(csv), csv });
+    }).catch((error) => {
+      sendResponse({ ok: false, reason: 'license_required', error: String(error?.message || error) });
+    });
+    return true;
   }
 
   if (message.type === 'EXPORT_EXCEL_COLORED') {
-    if (message.requireReady && !canExportCsvNow()) {
-      sendResponse({
-        ok: false,
-        reason: 'sync_not_ready',
-        syncInFlight,
-        pendingHydrationCount: getPendingHydrationCount()
-      });
-      return;
-    }
-    const excel = generateColoredExcelXml();
-    sendResponse({ ok: Boolean(excel), excel });
+    const currentLicense = ensureLicenseActive();
+    currentLicense.then((license) => {
+      if (!license.active) {
+        sendResponse({
+          ok: false,
+          reason: 'license_required',
+          error: license.lastError || 'Activate license first.'
+        });
+        return;
+      }
+      if (message.requireReady && !canExportCsvNow()) {
+        sendResponse({
+          ok: false,
+          reason: 'sync_not_ready',
+          syncInFlight,
+          pendingHydrationCount: getPendingHydrationCount()
+        });
+        return;
+      }
+      const excel = generateColoredExcelXml();
+      sendResponse({ ok: Boolean(excel), excel });
+    }).catch((error) => {
+      sendResponse({ ok: false, reason: 'license_required', error: String(error?.message || error) });
+    });
+    return true;
   }
 
   if (message.type === 'RUN_SCHEDULED_SYNC') {
     (async () => {
       try {
+        const currentLicense = await ensureLicenseActive({ forceFresh: true });
+        if (!currentLicense.active) {
+          sendResponse({ ok: false, error: currentLicense.lastError || 'Activate license first.' });
+          return;
+        }
         await performScheduledSync('manual');
         sendResponse({ ok: true });
       } catch (error) {
@@ -441,6 +736,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'RUN_HIDDEN_INCOME_SYNC') {
     (async () => {
       try {
+        const currentLicense = await ensureLicenseActive();
+        if (!currentLicense.active) {
+          sendResponse({ ok: false, error: currentLicense.lastError || 'Activate license first.' });
+          return;
+        }
         await runHiddenIncomeSync();
         sendResponse({ ok: true });
       } catch (error) {
@@ -452,6 +752,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'RUN_MONITOR_NOW') {
     (async () => {
       try {
+        const currentLicense = await ensureLicenseActive();
+        if (!currentLicense.active) {
+          sendResponse({ ok: false, error: currentLicense.lastError || 'Activate license first.' });
+          return;
+        }
         monitorEnabled = true;
         await chrome.storage.local.set({ monitorEnabled: true });
         syncMonitorAlarm();

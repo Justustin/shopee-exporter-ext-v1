@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= typeof title !== 'undefined' ? title : 'Shopee Fee Transparency' %></title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+    .navbar { background: #ee4d2d; color: white; padding: 12px 24px; display: flex; justify-content: space-between; align-items: center; }
+    .navbar h1 { font-size: 18px; }
+    .navbar a { color: white; text-decoration: none; margin-left: 16px; }
+    .container { max-width: 1200px; margin: 24px auto; padding: 0 24px; }
+    .card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    .btn { display: inline-block; padding: 8px 16px; border: none; border-radius: 6px; font-size: 14px; cursor: pointer; text-decoration: none; font-weight: 600; }
+    .btn-primary { background: #ee4d2d; color: white; }
+    .btn-primary:hover { background: #d84322; }
+    .btn-success { background: #4caf50; color: white; }
+    .btn-blue { background: #1e88e5; color: white; }
+    .btn-danger { background: #e53935; color: white; }
+    .btn:disabled { background: #ccc; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; }
+    th { background: #f9f9f9; font-weight: 600; color: #666; position: sticky; top: 0; }
+    tr:hover { background: #fafafa; }
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-weight: 600; margin-bottom: 4px; font-size: 14px; }
+    .form-group input, .form-group select { width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+    .alert { padding: 10px 16px; border-radius: 6px; margin-bottom: 16px; font-size: 14px; }
+    .alert-error { background: #fce4ec; color: #c62828; }
+    .alert-success { background: #e8f5e9; color: #2e7d32; }
+    .stat { text-align: center; }
+    .stat .value { font-size: 28px; font-weight: 700; color: #ee4d2d; }
+    .stat .label { font-size: 12px; color: #999; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+    .money { font-family: 'Courier New', monospace; text-align: right; }
+    .text-right { text-align: right; }
+    .text-muted { color: #999; font-size: 12px; }
+    .mt-16 { margin-top: 16px; }
+    .mb-16 { margin-bottom: 16px; }
+    .flex { display: flex; gap: 12px; align-items: center; }
+    .flex-between { display: flex; justify-content: space-between; align-items: center; }
+    .overflow-x { overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <div class="navbar">
+    <h1>Shopee Fee Transparency</h1>
+    <div>
+      <% if (typeof user !== 'undefined' && user) { %>
+        <a href="/dashboard">Dashboard</a>
+        <form action="/auth/logout" method="POST" style="display:inline">
+          <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+          <button type="submit" style="background:none;border:none;color:white;cursor:pointer;font-size:14px;margin-left:16px">Logout</button>
+        </form>
+      <% } %>
+    </div>
+  </div>
+  <div class="container">

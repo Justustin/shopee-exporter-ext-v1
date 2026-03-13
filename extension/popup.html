@@ -124,6 +124,30 @@
     .message.warning { background: var(--warning-bg); color: var(--warning); }
     .message.error { background: var(--danger-bg); color: var(--danger); }
 
+    .hidden { display: none !important; }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
+    }
+
+    .field label {
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .field input {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 11px 12px;
+      font: inherit;
+      color: var(--text);
+      background: #fffdfb;
+    }
+
     button {
       width: 100%;
       border: none;
@@ -168,6 +192,16 @@
       background: #ece5de;
     }
 
+    .btn-soft {
+      background: #f3eee9;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .btn-soft:hover:not(:disabled) {
+      background: #ece5de;
+    }
+
     .footer {
       color: var(--muted);
       font-size: 11px;
@@ -185,7 +219,7 @@
   <div class="stack">
     <section class="card">
       <h1>Shopee Exporter</h1>
-      <div class="subtle">Click Start. When orders appear, export.</div>
+      <div class="subtle">Activate once, then use Start and export as usual.</div>
       <div class="summary">
         <div class="metric">
           <div class="metric-label">Captured</div>
@@ -195,6 +229,46 @@
           <div class="metric-label">Remaining</div>
           <div class="metric-value" id="remainingCount">0</div>
         </div>
+      </div>
+    </section>
+
+    <section class="card" id="licenseInactiveView">
+      <div class="status-row">
+        <div class="status-label">License</div>
+        <div class="status-value" id="licenseStatusText">Activation required</div>
+      </div>
+      <div class="field">
+        <label for="licenseKeyInput">Activation key</label>
+        <input id="licenseKeyInput" type="text" placeholder="SHXP1-XXXXX-XXXXX-XXXXX-XXXXX" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="field">
+        <button class="btn-start" id="btnActivate">Activate License</button>
+      </div>
+    </section>
+
+    <section class="card hidden" id="licenseActiveView">
+      <div class="status-row">
+        <div class="status-label">License</div>
+        <div class="status-value" id="licenseSummaryText">Active</div>
+      </div>
+      <div class="status-row">
+        <div class="status-label">Plan</div>
+        <div class="status-value" id="licensePlanText">-</div>
+      </div>
+      <div class="status-row">
+        <div class="status-label">Customer</div>
+        <div class="status-value" id="licenseCustomerText">-</div>
+      </div>
+      <div class="status-row">
+        <div class="status-label">Expires</div>
+        <div class="status-value" id="licenseExpiryText">-</div>
+      </div>
+      <div class="status-row">
+        <div class="status-label">Verified</div>
+        <div class="status-value" id="licenseVerifiedText">-</div>
+      </div>
+      <div class="field">
+        <button class="btn-soft" id="btnRemoveLicense">Remove License</button>
       </div>
     </section>
 
@@ -215,14 +289,14 @@
 
     <div class="message" id="messageBox"></div>
 
-    <button class="btn-start" id="btnStart">Start</button>
-    <button class="btn-excel" id="btnExportExcel" disabled>Export Excel</button>
-    <button class="btn-csv" id="btnExportCSV" disabled>Export CSV</button>
+    <button class="btn-start hidden" id="btnStart">Start</button>
+    <button class="btn-excel hidden" id="btnExportExcel" disabled>Export Excel</button>
+    <button class="btn-csv hidden" id="btnExportCSV" disabled>Export CSV</button>
 
     <section class="card footer">
       This popup clears old data and runs a fresh sync when you press <strong>Start</strong>.
       <br><br>
-      Need different export names? <a href="#" id="settingsLink">Open settings</a>
+      Need different export names or a different license server URL? <a href="#" id="settingsLink">Open settings</a>
     </section>
   </div>
 
