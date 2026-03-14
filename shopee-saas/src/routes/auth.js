@@ -1,6 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const db = require('../db');
+const config = require('../config');
 const router = express.Router();
 
 function regenerateSession(req) {
@@ -12,19 +13,35 @@ function regenerateSession(req) {
   });
 }
 
+function getAuthErrorMessage(errorCode) {
+  if (errorCode === 'registration_disabled') {
+    return 'Registration is disabled on this server. Ask the administrator to create your account.';
+  }
+  return null;
+}
+
 router.get('/login', (req, res) => {
-  res.render('login', { error: null });
+  res.render('login', {
+    error: getAuthErrorMessage(req.query.error),
+    registrationEnabled: config.allowSelfRegistration,
+  });
 });
 
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
-    return res.render('login', { error: 'Email and password are required' });
+    return res.render('login', {
+      error: 'Email and password are required',
+      registrationEnabled: config.allowSelfRegistration,
+    });
   }
 
   const user = await db('users').where({ email: email.toLowerCase().trim() }).first();
   if (!user || !(await bcrypt.compare(password, user.password_hash))) {
-    return res.render('login', { error: 'Invalid email or password' });
+    return res.render('login', {
+      error: 'Invalid email or password',
+      registrationEnabled: config.allowSelfRegistration,
+    });
   }
 
   await regenerateSession(req);
@@ -33,21 +50,27 @@ router.post('/login', async (req, res) => {
 });
 
 router.get('/register', (req, res) => {
-  res.render('register', { error: null });
+  if (!config.allowSelfRegistration) {
+    return res.redirect('/auth/login?error=registration_disabled');
+  }
+  return res.render('register', { error: null, registrationEnabled: true });
 });
 
 router.post('/register', async (req, res) => {
+  if (!config.allowSelfRegistration) {
+    return res.redirect('/auth/login?error=registration_disabled');
+  }
   const { email, password, name } = req.body;
   if (!email || !password) {
-    return res.render('register', { error: 'Email and password are required' });
+    return res.render('register', { error: 'Email and password are required', registrationEnabled: true });
   }
   if (String(password).length < 8) {
-    return res.render('register', { error: 'Password must be at least 8 characters' });
+    return res.render('register', { error: 'Password must be at least 8 characters', registrationEnabled: true });
   }
 
   const existing = await db('users').where({ email: email.toLowerCase().trim() }).first();
   if (existing) {
-    return res.render('register', { error: 'Email already registered' });
+    return res.render('register', { error: 'Email already registered', registrationEnabled: true });
   }
 
   const passwordHash = await bcrypt.hash(password, 12);

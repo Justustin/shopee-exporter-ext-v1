@@ -1,17 +1,49 @@
 const db = require('../db');
 
-const CSV_HEADERS = [
-  'Order ID', 'Order SN', 'Income Invoice ID', 'Buyer Name', 'Order Status',
-  'Created', 'Payment Method', 'Product Name', 'SKU/Variant', 'Quantity',
-  'Unit Price', 'Product Subtotal', 'Total Quantity', 'Order Total (Rp)',
-  'Admin Fee (Rp)', 'Service Fee (Rp)', 'Transaction Fee (Rp)',
-  'Shipping Fee (Rp)', 'Shipping Fee Rebate (Rp)', 'Buyer Shipping Fee (Rp)',
-  'Shopee Shipping Rebate (Rp)', 'Voucher Shopee (Rp)', 'Voucher Seller (Rp)',
-  'Coins (Rp)', 'Order Income (Rp)', 'Net Income (Rp)',
+const EXPORT_COLUMNS = [
+  { header: 'Order ID', key: 'order_id', type: 'string' },
+  { header: 'Order SN', key: 'order_sn', type: 'string' },
+  { header: 'Income Invoice ID', key: 'income_invoice_id', type: 'string' },
+  { header: 'Buyer Name', key: 'buyer_name', type: 'string' },
+  { header: 'Order Status', key: 'order_status', type: 'string' },
+  { header: 'Created', key: 'create_time', type: 'string' },
+  { header: 'Payment Method', key: 'payment_method', type: 'string' },
+  { header: 'Product Name', key: 'item_name', type: 'string' },
+  { header: 'SKU/Variant', key: 'sku', type: 'string' },
+  { header: 'Quantity', key: 'quantity', type: 'number' },
+  { header: 'Unit Price', key: 'unit_price', type: 'number' },
+  { header: 'Product Subtotal', key: 'subtotal', type: 'number' },
+  { header: 'Total Quantity', key: 'total_quantity', type: 'number' },
+  { header: 'Order Total (Rp)', key: 'order_total', type: 'number' },
+  { header: 'Admin Fee (Rp)', key: 'admin_fee', type: 'number' },
+  { header: 'Service Fee (Rp)', key: 'service_fee', type: 'number' },
+  { header: 'Transaction Fee (Rp)', key: 'transaction_fee', type: 'number' },
+  { header: 'Shipping Fee (Rp)', key: 'shipping_fee', type: 'number' },
+  { header: 'Shipping Fee Rebate (Rp)', key: 'shipping_fee_rebate', type: 'number' },
+  { header: 'Buyer Shipping Fee (Rp)', key: 'buyer_shipping_fee', type: 'number' },
+  { header: 'Shopee Shipping Rebate (Rp)', key: 'shopee_shipping_rebate', type: 'number' },
+  { header: 'Voucher Shopee (Rp)', key: 'voucher_from_shopee', type: 'number' },
+  { header: 'Voucher Seller (Rp)', key: 'voucher_from_seller', type: 'number' },
+  { header: 'Coins (Rp)', key: 'coins', type: 'number' },
+  { header: 'Order Income (Rp)', key: 'order_income', type: 'number' },
+  { header: 'Net Income (Rp)', key: 'net_income', type: 'number' },
 ];
 
-function escCsv(val) {
-  const s = String(val ?? '');
+const CSV_HEADERS = EXPORT_COLUMNS.map((column) => column.header);
+
+function protectSpreadsheetText(value) {
+  const text = String(value ?? '');
+  if (/^[\s]*[=+\-@]/.test(text)) {
+    return `'${text}`;
+  }
+  if (/^\d{15,}$/.test(text.trim())) {
+    return `'${text}`;
+  }
+  return text;
+}
+
+function escCsv(val, options = {}) {
+  const s = options.text ? protectSpreadsheetText(val) : String(val ?? '');
   if (s.includes(',') || s.includes('"') || s.includes('\n')) {
     return '"' + s.replace(/"/g, '""') + '"';
   }
@@ -108,15 +140,7 @@ async function generateCSV(storeId, dateFrom, dateTo) {
   const lines = [CSV_HEADERS.join(',')];
 
   for (const row of rows) {
-    const values = [
-      row.order_id, row.order_sn, row.income_invoice_id, row.buyer_name,
-      row.order_status, row.create_time, row.payment_method,
-      row.item_name, row.sku, row.quantity, row.unit_price, row.subtotal,
-      row.total_quantity, row.order_total, row.admin_fee, row.service_fee,
-      row.transaction_fee, row.shipping_fee, row.shipping_fee_rebate,
-      row.buyer_shipping_fee, row.shopee_shipping_rebate, row.voucher_from_shopee,
-      row.voucher_from_seller, row.coins, row.order_income, row.net_income,
-    ].map(escCsv);
+    const values = EXPORT_COLUMNS.map((column) => escCsv(row[column.key], { text: column.type !== 'number' }));
     lines.push(values.join(','));
   }
 
@@ -146,21 +170,13 @@ async function generateExcelXml(storeId, dateFrom, dateTo) {
     }
     const style = colorIdx === 0 ? 'groupA' : 'groupB';
 
-    const vals = [
-      row.order_id, row.order_sn, row.income_invoice_id, row.buyer_name,
-      row.order_status, row.create_time, row.payment_method,
-      row.item_name, row.sku, row.quantity, row.unit_price, row.subtotal,
-      row.total_quantity, row.order_total, row.admin_fee, row.service_fee,
-      row.transaction_fee, row.shipping_fee, row.shipping_fee_rebate,
-      row.buyer_shipping_fee, row.shopee_shipping_rebate, row.voucher_from_shopee,
-      row.voucher_from_seller, row.coins, row.order_income, row.net_income,
-    ];
-
     rowsXml += `<Row ss:StyleID="${style}">`;
-    for (const v of vals) {
-      const isNum = v !== '' && !isNaN(v);
-      const type = isNum ? 'Number' : 'String';
-      rowsXml += `<Cell><Data ss:Type="${type}">${escXml(v)}</Data></Cell>`;
+    for (const column of EXPORT_COLUMNS) {
+      const value = row[column.key];
+      const isNumber = column.type === 'number' && value !== '' && value !== null && value !== undefined && !isNaN(value);
+      const type = isNumber ? 'Number' : 'String';
+      const cellValue = isNumber ? value : String(value ?? '');
+      rowsXml += `<Cell><Data ss:Type="${type}">${escXml(cellValue)}</Data></Cell>`;
     }
     rowsXml += '</Row>\n';
   }

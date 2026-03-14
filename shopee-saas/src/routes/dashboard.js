@@ -17,17 +17,28 @@ router.get('/', async (req, res) => {
   };
 
   const stores = await db('stores').where({ user_id: userId, is_active: true });
+  const storeIds = stores.map((store) => store.id);
+  const statsByStoreId = new Map();
+
+  if (storeIds.length) {
+    const statsRows = await db('orders')
+      .whereIn('store_id', storeIds)
+      .where('create_time', '>=', monthStart)
+      .groupBy('store_id')
+      .select(
+        'store_id',
+        db.raw('COUNT(*) as order_count'),
+        db.raw('COALESCE(SUM(net_income), 0) as net_income_total')
+      );
+
+    for (const row of statsRows) {
+      statsByStoreId.set(row.store_id, row);
+    }
+  }
 
   // Enrich with monthly stats
   for (const store of stores) {
-    const stats = await db('orders')
-      .where({ store_id: store.id })
-      .where('create_time', '>=', monthStart)
-      .select(
-        db.raw('COUNT(*) as order_count'),
-        db.raw('COALESCE(SUM(net_income), 0) as net_income_total')
-      )
-      .first();
+    const stats = statsByStoreId.get(store.id) || {};
     store.order_count = toInt(stats.order_count);
     store.net_income_total = toInt(stats.net_income_total);
   }

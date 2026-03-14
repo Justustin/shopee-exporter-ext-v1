@@ -9,12 +9,13 @@ function toBool(value, defaultValue = false) {
 function buildConnection(isProduction) {
   const connectionString = process.env.DATABASE_URL || 'postgres://localhost:5432/shopee_saas';
   const useSsl = toBool(process.env.DATABASE_SSL, isProduction);
+  const rejectUnauthorized = toBool(process.env.DATABASE_SSL_REJECT_UNAUTHORIZED, true);
   if (!useSsl) {
     return connectionString;
   }
   return {
     connectionString,
-    ssl: { rejectUnauthorized: false },
+    ssl: { rejectUnauthorized },
   };
 }
 

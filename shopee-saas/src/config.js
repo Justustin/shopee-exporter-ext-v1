@@ -13,12 +13,19 @@ function toList(value) {
     .filter(Boolean);
 }
 
+function toPositiveInt(value, defaultValue) {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
+}
+
 const config = {
   port: parseInt(process.env.PORT, 10) || 3000,
   nodeEnv: process.env.NODE_ENV || 'development',
   sessionSecret: process.env.SESSION_SECRET || 'dev-secret-change-me',
   databaseUrl: process.env.DATABASE_URL || 'postgres://localhost:5432/shopee_saas',
   databaseSsl: toBool(process.env.DATABASE_SSL, process.env.NODE_ENV === 'production'),
+  databaseSslRejectUnauthorized: toBool(process.env.DATABASE_SSL_REJECT_UNAUTHORIZED, true),
+  allowSelfRegistration: toBool(process.env.ALLOW_SELF_REGISTRATION, process.env.NODE_ENV !== 'production'),
 
   shopee: {
     enabled: toBool(process.env.ENABLE_SHOPEE_PLATFORM, false),
@@ -31,6 +38,7 @@ const config = {
   tokenEncryptionKey: process.env.TOKEN_ENCRYPTION_KEY || '',
   license: {
     pepper: process.env.LICENSE_PEPPER || process.env.SESSION_SECRET || 'dev-license-pepper',
+    verificationRetentionDays: toPositiveInt(process.env.LICENSE_VERIFICATION_RETENTION_DAYS, 90),
   },
   adminEmails: toList(process.env.ADMIN_EMAILS),
   support: {
@@ -56,6 +64,9 @@ function validateRuntimeConfig() {
   }
   if (config.nodeEnv === 'production' && !config.adminEmails.length) {
     errors.push('ADMIN_EMAILS must contain at least one admin email in production');
+  }
+  if (config.nodeEnv === 'production' && config.allowSelfRegistration) {
+    errors.push('ALLOW_SELF_REGISTRATION must be false in production');
   }
   if (config.shopee.enabled) {
     if (!Number.isFinite(config.shopee.partnerId) || config.shopee.partnerId <= 0) {

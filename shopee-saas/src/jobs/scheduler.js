@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const logger = require('../utils/logger');
 const { runSyncAll } = require('./sync-orders');
 const { runTokenRefresh } = require('./refresh-tokens');
+const { pruneVerificationHistory } = require('../services/license-service');
 const db = require('../db');
 
 function start() {
@@ -41,7 +42,11 @@ function start() {
         .where('paid_until', '<', now)
         .update({ status: 'expired', updated_at: now });
 
+      const deletedVerifications = await pruneVerificationHistory();
       logger.info('Subscription check complete');
+      if (deletedVerifications > 0) {
+        logger.info(`Pruned ${deletedVerifications} old license verification rows`);
+      }
     } catch (err) {
       logger.error('Subscription check cron failed', err);
     }

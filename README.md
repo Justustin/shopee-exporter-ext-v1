@@ -45,6 +45,7 @@ That produces `dist/extension-customer`.
 
 Deployment notes for the license backend are in [`docs/phase1-deploy.md`](./docs/phase1-deploy.md).
 Buyer handoff docs are in [`docs/buyer-install.md`](./docs/buyer-install.md) and [`docs/buyer-usage.md`](./docs/buyer-usage.md).
+Ship `dist/extension-customer`, not the raw [`extension`](./extension) folder.
 
 ## Repo layout
 

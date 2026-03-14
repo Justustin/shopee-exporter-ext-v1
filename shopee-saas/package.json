@@ -9,7 +9,8 @@
     "migrate": "knex migrate:latest",
     "migrate:rollback": "knex migrate:rollback",
     "migrate:make": "knex migrate:make",
-    "license:create": "node src/scripts/create-license.js"
+    "license:create": "node src/scripts/create-license.js",
+    "admin:create": "node src/scripts/create-admin.js"
   },
   "keywords": [],
   "license": "UNLICENSED",

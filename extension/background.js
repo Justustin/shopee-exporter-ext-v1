@@ -12,7 +12,7 @@ const LICENSE_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const LICENSE_OFFLINE_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_LICENSE_API_BASE_URL = 'http://localhost:3000';
 const SELLER_CDS_VER = '2';
-const BUILD_TAG = '2026-03-13-e';
+const BUILD_TAG = '2026-03-14-a';
 const INVOICE_LIST_URL_FILTER = '*://seller.shopee.co.id/api/v4/invoice/seller/get_invoice_list*';
 const INCOME_REPORT_LIST_URL = 'https://seller.shopee.co.id/api/v4/accounting/pc/seller_income/income_report/get_income_report_list';
 const ACCOUNTING_INCOME_DETAIL_URL = 'https://seller.shopee.co.id/api/v4/accounting/pc/seller_income/income_overview/get_income_detail';
@@ -343,10 +343,23 @@ function normalizeLicenseState(raw) {
   });
 }
 
+function parseLicenseExpiryTimestamp(value) {
+  const text = String(value || '').trim();
+  if (!text) return 0;
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isLicenseLocallyExpired(state = licenseState) {
+  const expiresAtMs = parseLicenseExpiryTimestamp(state?.expiresAt);
+  return Boolean(expiresAtMs && expiresAtMs <= Date.now());
+}
+
 function getPublicLicenseState() {
+  const locallyExpired = isLicenseLocallyExpired(licenseState);
   return {
-    active: Boolean(licenseState.active),
-    status: licenseState.status || 'missing',
+    active: Boolean(licenseState.active) && !locallyExpired,
+    status: locallyExpired ? 'expired' : (licenseState.status || 'missing'),
     hasKey: Boolean(licenseState.key),
     plan: licenseState.plan || '',
     maxStores: toNumberOrNull(licenseState.maxStores) || 0,
@@ -356,10 +369,10 @@ function getPublicLicenseState() {
     customerName: licenseState.customerName || '',
     expiresAt: licenseState.expiresAt || '',
     lastVerifiedAt: licenseState.lastVerifiedAt || 0,
-    lastError: licenseState.lastError || '',
+    lastError: locallyExpired ? 'License has expired. Renew the license to continue.' : (licenseState.lastError || ''),
     apiBaseUrl: normalizeLicenseApiBaseUrl(licenseState.apiBaseUrl || DEFAULT_LICENSE_API_BASE_URL),
     installationId: licenseState.installationId || '',
-    offlineGraceActive: licenseState.status === 'offline_grace'
+    offlineGraceActive: !locallyExpired && licenseState.status === 'offline_grace'
   };
 }
 
@@ -546,6 +559,18 @@ async function ensureLicenseActive(options = {}) {
     licenseState.lastVerifiedAt &&
     (Date.now() - licenseState.lastVerifiedAt) < LICENSE_CACHE_TTL_MS;
 
+  if (!forceFresh && isLicenseLocallyExpired(licenseState)) {
+    licenseState = normalizeLicenseState({
+      ...licenseState,
+      apiBaseUrl,
+      active: false,
+      status: 'expired',
+      lastError: 'License has expired. Renew the license to continue.'
+    });
+    await saveLicenseState();
+    return licenseState;
+  }
+
   if (!forceFresh && isFresh) {
     return licenseState;
   }
@@ -586,6 +611,7 @@ async function ensureLicenseActive(options = {}) {
   } catch (error) {
     const lastError = String(error?.message || error || 'License verification failed');
     const offlineGraceValid = licenseState.active &&
+      !isLicenseLocallyExpired(licenseState) &&
       licenseState.lastVerifiedAt &&
       (Date.now() - licenseState.lastVerifiedAt) < LICENSE_OFFLINE_GRACE_MS;
 
@@ -3574,7 +3600,11 @@ function generateCSV() {
 
   for (const row of rows) {
     const values = EXPORT_HEADERS.map((h) => {
-      const val = String(row[h] ?? '');
+      const isNumericColumn = ['integer', 'currency', 'percent'].includes(ORDER_LINE_COLUMN_CONFIG[h]?.type || '');
+      const rawValue = row[h] ?? '';
+      const val = isNumericColumn
+        ? String(rawValue)
+        : protectSpreadsheetText(rawValue);
       if (val.includes(',') || val.includes('"') || val.includes('\n')) {
         return '"' + val.replace(/"/g, '""') + '"';
       }
@@ -3584,6 +3614,17 @@ function generateCSV() {
   }
 
   return csvLines.join('\n');
+}
+
+function protectSpreadsheetText(value) {
+  const text = String(value ?? '');
+  if (/^[\s]*[=+\-@]/.test(text)) {
+    return `'${text}`;
+  }
+  if (/^\d{15,}$/.test(text.trim())) {
+    return `'${text}`;
+  }
+  return text;
 }
 
 function escapeXml(value) {

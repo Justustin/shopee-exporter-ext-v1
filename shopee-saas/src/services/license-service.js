@@ -68,6 +68,14 @@ function createReadableKey() {
   return `SHXP1-${raw.slice(0, 5)}-${raw.slice(5, 10)}-${raw.slice(10, 15)}-${raw.slice(15, 20)}`;
 }
 
+function truncateText(value, maxLength = 255) {
+  return String(value || '').trim().slice(0, maxLength);
+}
+
+function normalizeAuditEmail(value) {
+  return truncateText(String(value || '').toLowerCase(), 255);
+}
+
 function normalizeStoreIdentity({ storeKey = '', storeName = '' } = {}) {
   const normalizedName = normalizeStoreNameValue(storeName);
   const sanitizedName = isGenericStoreName(normalizedName) ? '' : normalizedName;
@@ -161,17 +169,14 @@ async function recordVerification(executor, {
     await executor('license_verifications').insert({
       license_id: licenseId || null,
       license_key_hash: licenseKeyHash || null,
-      store_key: storeIdentity.storeKey || null,
-      store_name: storeIdentity.storeName || null,
-      build_tag: meta.buildTag || null,
-      profile_email: meta.profileEmail || null,
+      store_key: truncateText(storeIdentity.storeKey, 255) || null,
+      store_name: truncateText(storeIdentity.storeName, 255) || null,
+      build_tag: truncateText(meta.buildTag, 255) || null,
+      profile_email: normalizeAuditEmail(meta.profileEmail) || null,
       result_code: code || 'UNKNOWN',
       success: Boolean(success),
-      error_message: error || null,
-      metadata: {
-        buildTag: meta.buildTag || '',
-        profileEmail: meta.profileEmail || '',
-      },
+      error_message: truncateText(error, 1000) || null,
+      metadata: {},
     });
   } catch (verificationError) {
     logger.error('Failed to record license verification', {
@@ -181,6 +186,17 @@ async function recordVerification(executor, {
       code,
     });
   }
+}
+
+async function pruneVerificationHistory(retentionDays = config.license.verificationRetentionDays) {
+  const days = parseInt(retentionDays, 10);
+  if (!Number.isFinite(days) || days <= 0) {
+    return 0;
+  }
+  const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  return db('license_verifications')
+    .where('created_at', '<', cutoff)
+    .del();
 }
 
 async function verifyLicense({ licenseKey, storeKey = '', storeName = '', meta = {} }) {
@@ -549,4 +565,5 @@ module.exports = {
   extendLicenseExpiry,
   resetLicenseStore,
   resetAllLicenseStores,
+  pruneVerificationHistory,
 };

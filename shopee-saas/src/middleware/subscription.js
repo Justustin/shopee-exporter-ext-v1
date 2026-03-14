@@ -32,6 +32,30 @@ async function fetchSubscription(userId) {
     .first();
 }
 
+async function fetchLatestSubscriptionsByUserIds(userIds) {
+  const ids = Array.from(new Set((userIds || []).map((value) => parseInt(value, 10)).filter(Number.isFinite)));
+  const result = new Map();
+  if (!ids.length) {
+    return result;
+  }
+
+  const rows = await db('subscriptions')
+    .whereIn('user_id', ids)
+    .orderBy([
+      { column: 'user_id', order: 'asc' },
+      { column: 'updated_at', order: 'desc' },
+      { column: 'id', order: 'desc' },
+    ]);
+
+  for (const row of rows) {
+    if (!result.has(row.user_id)) {
+      result.set(row.user_id, row);
+    }
+  }
+
+  return result;
+}
+
 async function ensureSubscription(req) {
   if (Object.prototype.hasOwnProperty.call(req, 'subscription')) {
     return req.subscription;
@@ -85,4 +109,9 @@ async function requireActiveSubscription(req, res, next) {
   }
 }
 
-module.exports = { attachSubscription, requireActiveSubscription, isActiveSubscription };
+module.exports = {
+  attachSubscription,
+  requireActiveSubscription,
+  isActiveSubscription,
+  fetchLatestSubscriptionsByUserIds,
+};

@@ -26,8 +26,12 @@ NODE_ENV=production
 PORT=3000
 SESSION_SECRET=replace-with-long-random-secret
 LICENSE_PEPPER=replace-with-long-random-secret
+ADMIN_EMAILS=you@example.com
 DATABASE_URL=postgresql://USER:PASSWORD@HOST/DB?sslmode=require
 DATABASE_SSL=false
+DATABASE_SSL_REJECT_UNAUTHORIZED=true
+ALLOW_SELF_REGISTRATION=false
+LICENSE_VERIFICATION_RETENTION_DAYS=90
 ENABLE_SHOPEE_PLATFORM=false
 ```
 
@@ -39,6 +43,12 @@ npm install
 npm run migrate
 pm2 start ecosystem.config.cjs --env production
 pm2 save
+```
+
+Create the first admin user after deploy:
+
+```powershell
+npm run admin:create -- --email you@example.com --password replace-with-strong-password --name "Your Name"
 ```
 
 Health checks:

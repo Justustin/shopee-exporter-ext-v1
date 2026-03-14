@@ -15,8 +15,7 @@
   "host_permissions": [
     "https://seller.shopee.co.id/*",
     "http://localhost/*",
-    "http://127.0.0.1/*",
-    "https://*/*"
+    "http://127.0.0.1/*"
   ],
   "background": {
     "service_worker": "background.js"
