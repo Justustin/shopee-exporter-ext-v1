@@ -20,9 +20,9 @@ Chrome extension for capturing Shopee Seller Centre income and invoice detail, t
 
 1. Log into `https://seller.shopee.co.id`
 2. Open the extension popup
-3. Run `Sync Now`
-4. If some invoices are still pending, run `Warm Income Pages` or leave the monitor running
-5. Export once `Pending Hydration` reaches `0`
+3. Click `Start`
+4. Wait for the sync to finish
+5. Export Excel or CSV
 
 ## Settings
 
@@ -32,6 +32,18 @@ Open the extension options page to configure:
 - Optional seller label in filename
 - Whether to include the Shopee profile email in filenames
 - Whether to auto-clear captured data after successful export
+
+## Customer build
+
+To prepare a buyer-facing build that points to your hosted license server:
+
+```powershell
+node scripts/build-customer-extension.js --license-url https://license.yourdomain.com
+```
+
+That produces `dist/extension-customer`.
+
+Deployment notes for the license backend are in [`docs/phase1-deploy.md`](./docs/phase1-deploy.md).
 
 ## Repo layout
 

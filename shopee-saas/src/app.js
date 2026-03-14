@@ -31,6 +31,21 @@ app.use(rateLimit({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Health checks should not depend on session middleware.
+app.get('/health', (req, res) => {
+  res.json({ ok: true, service: 'shopee-saas' });
+});
+
+app.get('/health/db', async (req, res) => {
+  try {
+    await db.raw('select 1 as ok');
+    res.json({ ok: true, db: 'up' });
+  } catch (error) {
+    logger.error('Database health check failed', { error: error.message, stack: error.stack });
+    res.status(503).json({ ok: false, db: 'down' });
+  }
+});
+
 // Views
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
@@ -40,7 +55,7 @@ app.use(session({
   store: new PgSession({
     knex: db,
     tableName: 'session',
-    createTableIfMissing: true,
+    createTableIfMissing: false,
   }),
   secret: config.sessionSecret,
   resave: false,

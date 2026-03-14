@@ -2,8 +2,7 @@ const DEFAULT_SETTINGS = {
   exportFilenamePrefix: 'shopee-export',
   exportLabel: '',
   includeProfileEmailInFilename: false,
-  autoClearAfterExport: false,
-  licenseApiBaseUrl: 'http://localhost:3000'
+  autoClearAfterExport: false
 };
 
 const elements = {
@@ -301,7 +300,6 @@ function normalizeSettings(raw) {
   settings.exportLabel = String(settings.exportLabel || '').trim();
   settings.includeProfileEmailInFilename = Boolean(settings.includeProfileEmailInFilename);
   settings.autoClearAfterExport = Boolean(settings.autoClearAfterExport);
-  settings.licenseApiBaseUrl = String(settings.licenseApiBaseUrl || DEFAULT_SETTINGS.licenseApiBaseUrl).trim() || DEFAULT_SETTINGS.licenseApiBaseUrl;
   return settings;
 }
 
