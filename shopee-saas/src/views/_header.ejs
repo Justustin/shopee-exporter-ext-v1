@@ -47,8 +47,13 @@
   <div class="navbar">
     <h1>Shopee Fee Transparency</h1>
     <div>
+      <a href="/privacy">Privacy</a>
+      <a href="/support">Support</a>
       <% if (typeof user !== 'undefined' && user) { %>
         <a href="/dashboard">Dashboard</a>
+        <% if (typeof isAdmin !== 'undefined' && isAdmin) { %>
+          <a href="/admin/licenses">Admin</a>
+        <% } %>
         <form action="/auth/logout" method="POST" style="display:inline">
           <input type="hidden" name="_csrf" value="<%= csrfToken %>">
           <button type="submit" style="background:none;border:none;color:white;cursor:pointer;font-size:14px;margin-left:16px">Logout</button>

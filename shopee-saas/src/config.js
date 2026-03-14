@@ -6,6 +6,13 @@ function toBool(value, defaultValue = false) {
   return ['1', 'true', 'yes', 'y', 'on'].includes(normalized);
 }
 
+function toList(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 const config = {
   port: parseInt(process.env.PORT, 10) || 3000,
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -25,6 +32,11 @@ const config = {
   license: {
     pepper: process.env.LICENSE_PEPPER || process.env.SESSION_SECRET || 'dev-license-pepper',
   },
+  adminEmails: toList(process.env.ADMIN_EMAILS),
+  support: {
+    email: process.env.SUPPORT_EMAIL || 'support@example.com',
+    whatsapp: process.env.SUPPORT_WHATSAPP || '',
+  },
 
   sync: {
     intervalHours: 6,
@@ -41,6 +53,9 @@ function validateRuntimeConfig() {
 
   if (config.nodeEnv === 'production' && config.sessionSecret === 'dev-secret-change-me') {
     errors.push('SESSION_SECRET must be set in production');
+  }
+  if (config.nodeEnv === 'production' && !config.adminEmails.length) {
+    errors.push('ADMIN_EMAILS must contain at least one admin email in production');
   }
   if (config.shopee.enabled) {
     if (!Number.isFinite(config.shopee.partnerId) || config.shopee.partnerId <= 0) {

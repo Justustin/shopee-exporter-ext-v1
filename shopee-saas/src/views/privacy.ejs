@@ -1,0 +1,16 @@
+<% var title = 'Privacy Policy'; %>
+<%- include('_header') %>
+
+<div class="card">
+  <h2 style="margin-bottom:12px">Privacy Policy</h2>
+  <p style="margin-bottom:12px">Shopee Fee Transparency collects the minimum information required to activate licenses, verify store bindings, and support customers.</p>
+  <ul style="padding-left:18px;line-height:1.8">
+    <li>License verification records may include store key, store name, build tag, and profile email reported by the extension.</li>
+    <li>Customer account data includes email, plan, status, expiry, and bound store records.</li>
+    <li>Exported Shopee order data stays in your browser extension workflow; the Phase 1 licensing backend does not ingest order exports.</li>
+    <li>Data is used for license enforcement, support, and operational troubleshooting only.</li>
+  </ul>
+  <p style="margin-top:16px">For privacy questions, contact <a href="mailto:<%= supportEmail %>"><%= supportEmail %></a>.</p>
+</div>
+
+<%- include('_footer') %>

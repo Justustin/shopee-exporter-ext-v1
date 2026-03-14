@@ -1,5 +1,6 @@
 const express = require('express');
 const { verifyLicense } = require('../../services/license-service');
+const logger = require('../../utils/logger');
 
 const router = express.Router();
 
@@ -29,12 +30,27 @@ router.post('/verify', async (req, res) => {
     });
 
     if (!result.ok) {
+      logger.warn('License verification rejected', {
+        code: result.code,
+        storeKey: req.body.storeKey || '',
+        storeName: req.body.storeName || '',
+        buildTag: req.body.buildTag || '',
+        profileEmail: req.body.profileEmail || '',
+      });
       res.status(403).json(result);
       return;
     }
 
     res.json(result);
   } catch (error) {
+    logger.error('License verification failed', {
+      error: error.message,
+      stack: error.stack,
+      storeKey: req.body.storeKey || '',
+      storeName: req.body.storeName || '',
+      buildTag: req.body.buildTag || '',
+      profileEmail: req.body.profileEmail || '',
+    });
     res.status(500).json({
       ok: false,
       code: 'VERIFY_FAILED',

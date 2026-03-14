@@ -8,6 +8,7 @@ const config = require('./config');
 const db = require('./db');
 const logger = require('./utils/logger');
 const { attachCsrfToken, verifyCsrfToken } = require('./middleware/csrf');
+const { attachCurrentUser } = require('./middleware/admin');
 const { attachSubscription } = require('./middleware/subscription');
 
 const app = express();
@@ -73,14 +74,13 @@ app.use(attachCsrfToken);
 app.use(verifyCsrfToken);
 
 // Make user available to all views
-app.use((req, res, next) => {
-  res.locals.user = req.session.userId ? { id: req.session.userId } : null;
-  next();
-});
+app.use(attachCurrentUser);
 app.use(attachSubscription);
 
 // Routes
 const authRoutes = require('./routes/auth');
+const publicRoutes = require('./routes/public');
+const adminRoutes = require('./routes/admin');
 const shopeeOAuthRoutes = require('./routes/shopee-oauth');
 const dashboardRoutes = require('./routes/dashboard');
 const storeApiRoutes = require('./routes/api/stores');
@@ -90,6 +90,8 @@ const reportApiRoutes = require('./routes/api/reports');
 const licenseApiRoutes = require('./routes/api/license');
 
 app.use('/auth', authRoutes);
+app.use('/', publicRoutes);
+app.use('/admin', adminRoutes);
 app.use('/shopee', shopeeOAuthRoutes);
 app.use('/dashboard', dashboardRoutes);
 app.use('/api/stores', storeApiRoutes);

@@ -1,0 +1,143 @@
+<% var title = 'Admin - Licenses'; %>
+<%- include('_header') %>
+
+<div class="flex-between mb-16">
+  <div>
+    <h2>License Admin</h2>
+    <div class="text-muted">Search licenses, create new keys, and handle store resets without touching the database.</div>
+  </div>
+</div>
+
+<% if (flash) { %>
+  <div class="alert <%= flash.type === 'success' ? 'alert-success' : 'alert-error' %>">
+    <div><%= flash.message %></div>
+    <% if (flash.licenseKey) { %>
+      <div style="margin-top:8px;font-family:monospace;font-size:16px;font-weight:700"><%= flash.licenseKey %></div>
+    <% } %>
+  </div>
+<% } %>
+
+<div class="grid mb-16" style="grid-template-columns: 2fr 1fr;">
+  <div class="card">
+    <h3 style="margin-bottom:12px">Search</h3>
+    <form method="GET" action="/admin/licenses">
+      <div class="grid">
+        <div class="form-group">
+          <label for="email">Customer email</label>
+          <input id="email" name="email" type="text" value="<%= filters.email || '' %>">
+        </div>
+        <div class="form-group">
+          <label for="store">Store name / key</label>
+          <input id="store" name="store" type="text" value="<%= filters.store || '' %>">
+        </div>
+        <div class="form-group">
+          <label for="plan">Plan</label>
+          <select id="plan" name="plan">
+            <option value="">All</option>
+            <% for (const option of ['trial', 'starter', 'growth', 'pro', 'agency', 'custom']) { %>
+              <option value="<%= option %>" <%= filters.plan === option ? 'selected' : '' %>><%= option %></option>
+            <% } %>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="status">Status</label>
+          <select id="status" name="status">
+            <option value="">All</option>
+            <% for (const option of ['active', 'inactive']) { %>
+              <option value="<%= option %>" <%= filters.status === option ? 'selected' : '' %>><%= option %></option>
+            <% } %>
+          </select>
+        </div>
+      </div>
+      <div class="flex">
+        <button type="submit" class="btn btn-primary">Search</button>
+        <a href="/admin/licenses" class="btn btn-blue">Clear</a>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-bottom:12px">Create License</h3>
+    <form method="POST" action="/admin/licenses">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+      <div class="form-group">
+        <label for="customer_email">Customer email</label>
+        <input id="customer_email" name="customer_email" type="text" required>
+      </div>
+      <div class="form-group">
+        <label for="customer_name">Customer name</label>
+        <input id="customer_name" name="customer_name" type="text">
+      </div>
+      <div class="form-group">
+        <label for="plan_create">Plan</label>
+        <select id="plan_create" name="plan">
+          <option value="starter">starter</option>
+          <option value="growth">growth</option>
+          <option value="pro">pro</option>
+          <option value="custom">custom</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="duration_days">Duration (days)</label>
+        <input id="duration_days" name="duration_days" type="number" min="1" value="30">
+      </div>
+      <div class="form-group">
+        <label for="max_stores">Custom store limit</label>
+        <input id="max_stores" name="max_stores" type="number" min="1" placeholder="Leave blank to use plan default">
+      </div>
+      <div class="form-group">
+        <label for="notes">Notes</label>
+        <input id="notes" name="notes" type="text">
+      </div>
+      <button type="submit" class="btn btn-primary">Create License</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="flex-between mb-16">
+    <h3>Licenses</h3>
+    <div class="text-muted"><%= licenses.length %> result(s)</div>
+  </div>
+  <div class="overflow-x">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Email</th>
+          <th>Plan</th>
+          <th>Status</th>
+          <th>Stores</th>
+          <th>Expires</th>
+          <th>Last Verified</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (licenses.length === 0) { %>
+          <tr><td colspan="8" class="text-muted">No licenses found for the current filters.</td></tr>
+        <% } %>
+        <% for (const license of licenses) { %>
+          <tr>
+            <td>#<%= license.id %></td>
+            <td><%= license.customerEmail || '-' %></td>
+            <td><%= license.plan %> (<%= license.storeCount %>/<%= license.maxStores %>)</td>
+            <td><%= license.status %></td>
+            <td>
+              <% if (license.boundStores.length === 0) { %>
+                -
+              <% } else { %>
+                <%= license.boundStores.map((store) => store.storeName || store.storeKey).join(', ') %>
+              <% } %>
+            </td>
+            <td><%= license.expiresAt ? new Date(license.expiresAt).toLocaleDateString('id-ID') : 'No expiry' %></td>
+            <td><%= license.lastVerifiedAt ? new Date(license.lastVerifiedAt).toLocaleString('id-ID') : 'Never' %></td>
+            <td class="text-right"><a class="btn btn-primary" href="/admin/licenses/<%= license.id %>">Open</a></td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('_footer') %>

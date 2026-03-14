@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const db = require('../db');
 const config = require('../config');
+const logger = require('../utils/logger');
 
 const PLAN_STORE_LIMITS = {
   trial: 1,
@@ -89,13 +90,17 @@ function sanitizeLicenseRecord(record, boundStores = []) {
     id: record.id,
     plan: record.plan,
     status: record.status,
+    notes: record.notes || '',
     customerEmail: record.customer_email || '',
     customerName: record.customer_name || '',
     expiresAt: record.expires_at ? new Date(record.expires_at).toISOString() : '',
     lastVerifiedAt: record.last_verified_at ? new Date(record.last_verified_at).toISOString() : '',
+    createdAt: record.created_at ? new Date(record.created_at).toISOString() : '',
+    updatedAt: record.updated_at ? new Date(record.updated_at).toISOString() : '',
     maxStores: record.max_stores || 1,
     storeCount: boundStores.length,
     boundStores: boundStores.map((store) => ({
+      id: store.id,
       storeKey: store.store_key,
       storeName: store.store_name || '',
       firstVerifiedAt: store.first_verified_at ? new Date(store.first_verified_at).toISOString() : '',
@@ -122,18 +127,83 @@ async function fetchLicenseWithStores(trx, licenseId) {
   return { license, boundStores };
 }
 
+async function fetchBoundStoresMap(executor, licenseIds) {
+  const ids = Array.from(new Set((licenseIds || []).map((id) => parseInt(id, 10)).filter(Number.isFinite)));
+  const result = new Map();
+  if (!ids.length) return result;
+
+  const rows = await executor('license_stores')
+    .whereIn('license_id', ids)
+    .orderBy([{ column: 'license_id', order: 'asc' }, { column: 'id', order: 'asc' }]);
+
+  for (const id of ids) {
+    result.set(id, []);
+  }
+  for (const row of rows) {
+    if (!result.has(row.license_id)) {
+      result.set(row.license_id, []);
+    }
+    result.get(row.license_id).push(row);
+  }
+  return result;
+}
+
+async function recordVerification(executor, {
+  licenseId = null,
+  licenseKeyHash = '',
+  storeIdentity = {},
+  meta = {},
+  success = false,
+  code = '',
+  error = ''
+} = {}) {
+  try {
+    await executor('license_verifications').insert({
+      license_id: licenseId || null,
+      license_key_hash: licenseKeyHash || null,
+      store_key: storeIdentity.storeKey || null,
+      store_name: storeIdentity.storeName || null,
+      build_tag: meta.buildTag || null,
+      profile_email: meta.profileEmail || null,
+      result_code: code || 'UNKNOWN',
+      success: Boolean(success),
+      error_message: error || null,
+      metadata: {
+        buildTag: meta.buildTag || '',
+        profileEmail: meta.profileEmail || '',
+      },
+    });
+  } catch (verificationError) {
+    logger.error('Failed to record license verification', {
+      error: verificationError.message,
+      stack: verificationError.stack,
+      licenseId,
+      code,
+    });
+  }
+}
+
 async function verifyLicense({ licenseKey, storeKey = '', storeName = '', meta = {} }) {
   const normalizedKey = normalizeLicenseKey(licenseKey);
   if (!normalizedKey) {
-    return { ok: false, code: 'LICENSE_KEY_REQUIRED', error: 'License key is required' };
+    const result = { ok: false, code: 'LICENSE_KEY_REQUIRED', error: 'License key is required' };
+    await recordVerification(db, { code: result.code, error: result.error, meta });
+    return result;
   }
 
   const storeIdentity = normalizeStoreIdentity({ storeKey, storeName });
-  if (!storeIdentity.storeKey) {
-    return { ok: false, code: 'STORE_REQUIRED', error: 'Active Shopee store could not be identified' };
-  }
-
   const hash = hashLicenseKey(normalizedKey);
+  if (!storeIdentity.storeKey) {
+    const result = { ok: false, code: 'STORE_REQUIRED', error: 'Active Shopee store could not be identified' };
+    await recordVerification(db, {
+      licenseKeyHash: hash,
+      storeIdentity,
+      meta,
+      code: result.code,
+      error: result.error,
+    });
+    return result;
+  }
 
   return db.transaction(async (trx) => {
     const license = await trx('licenses')
@@ -142,13 +212,39 @@ async function verifyLicense({ licenseKey, storeKey = '', storeName = '', meta =
       .forUpdate();
 
     if (!license) {
-      return { ok: false, code: 'LICENSE_NOT_FOUND', error: 'License key not found' };
+      const result = { ok: false, code: 'LICENSE_NOT_FOUND', error: 'License key not found' };
+      await recordVerification(trx, {
+        licenseKeyHash: hash,
+        storeIdentity,
+        meta,
+        code: result.code,
+        error: result.error,
+      });
+      return result;
     }
     if (license.status !== 'active') {
-      return { ok: false, code: 'LICENSE_INACTIVE', error: 'License is inactive' };
+      const result = { ok: false, code: 'LICENSE_INACTIVE', error: 'License is inactive' };
+      await recordVerification(trx, {
+        licenseId: license.id,
+        licenseKeyHash: hash,
+        storeIdentity,
+        meta,
+        code: result.code,
+        error: result.error,
+      });
+      return result;
     }
     if (isExpired(license)) {
-      return { ok: false, code: 'LICENSE_EXPIRED', error: 'License has expired' };
+      const result = { ok: false, code: 'LICENSE_EXPIRED', error: 'License has expired' };
+      await recordVerification(trx, {
+        licenseId: license.id,
+        licenseKeyHash: hash,
+        storeIdentity,
+        meta,
+        code: result.code,
+        error: result.error,
+      });
+      return result;
     }
 
     const boundStores = await trx('license_stores')
@@ -178,12 +274,21 @@ async function verifyLicense({ licenseKey, storeKey = '', storeName = '', meta =
       } else {
         const maxStores = license.max_stores || 1;
         if (boundStores.length >= maxStores) {
-          return {
+          const result = {
             ok: false,
             code: 'STORE_LIMIT_REACHED',
             error: `License already used on ${boundStores.length}/${maxStores} store(s)`,
             license: sanitizeLicenseRecord(license, boundStores),
           };
+          await recordVerification(trx, {
+            licenseId: license.id,
+            licenseKeyHash: hash,
+            storeIdentity,
+            meta,
+            code: result.code,
+            error: result.error,
+          });
+          return result;
         }
 
         await trx('license_stores').insert({
@@ -220,6 +325,14 @@ async function verifyLicense({ licenseKey, storeKey = '', storeName = '', meta =
       });
 
     const refreshed = await fetchLicenseWithStores(trx, license.id);
+    await recordVerification(trx, {
+      licenseId: license.id,
+      licenseKeyHash: hash,
+      storeIdentity,
+      meta,
+      success: true,
+      code: 'OK',
+    });
 
     return {
       ok: true,
@@ -230,6 +343,165 @@ async function verifyLicense({ licenseKey, storeKey = '', storeName = '', meta =
       },
     };
   });
+}
+
+async function listLicenses(filters = {}) {
+  const email = String(filters.email || '').trim().toLowerCase();
+  const plan = String(filters.plan || '').trim().toLowerCase();
+  const status = String(filters.status || '').trim().toLowerCase();
+  const store = String(filters.store || '').trim();
+
+  const query = db('licenses')
+    .select('licenses.*')
+    .orderBy('licenses.updated_at', 'desc')
+    .limit(100);
+
+  if (email) {
+    query.whereILike('licenses.customer_email', `%${email}%`);
+  }
+  if (plan) {
+    query.where('licenses.plan', plan);
+  }
+  if (status) {
+    query.where('licenses.status', status);
+  }
+  if (store) {
+    query.whereExists(function filterByStore() {
+      this.select(db.raw('1'))
+        .from('license_stores')
+        .whereRaw('license_stores.license_id = licenses.id')
+        .andWhere(function applyStoreSearch() {
+          this.whereILike('license_stores.store_name', `%${store}%`)
+            .orWhereILike('license_stores.store_key', `%${store}%`);
+        });
+    });
+  }
+
+  const licenses = await query;
+  const storeMap = await fetchBoundStoresMap(db, licenses.map((license) => license.id));
+  return licenses.map((license) => sanitizeLicenseRecord(license, storeMap.get(license.id) || []));
+}
+
+async function getLicenseDetail(licenseId) {
+  const id = parseInt(licenseId, 10);
+  if (!Number.isFinite(id)) {
+    return null;
+  }
+
+  const fetched = await fetchLicenseWithStores(db, id);
+  if (!fetched) {
+    return null;
+  }
+
+  const verifications = await db('license_verifications')
+    .where({ license_id: id })
+    .orderBy('created_at', 'desc')
+    .limit(100);
+
+  return {
+    license: sanitizeLicenseRecord(fetched.license, fetched.boundStores),
+    verifications: verifications.map((entry) => ({
+      id: entry.id,
+      storeKey: entry.store_key || '',
+      storeName: entry.store_name || '',
+      buildTag: entry.build_tag || '',
+      profileEmail: entry.profile_email || '',
+      resultCode: entry.result_code || '',
+      success: Boolean(entry.success),
+      errorMessage: entry.error_message || '',
+      createdAt: entry.created_at ? new Date(entry.created_at).toISOString() : '',
+    })),
+  };
+}
+
+async function updateLicenseStatus(licenseId, status) {
+  const id = parseInt(licenseId, 10);
+  const normalizedStatus = String(status || '').trim().toLowerCase();
+  if (!Number.isFinite(id) || !['active', 'inactive'].includes(normalizedStatus)) {
+    throw new Error('Invalid license status update');
+  }
+
+  const updated = await db('licenses')
+    .where({ id })
+    .update({
+      status: normalizedStatus,
+      updated_at: db.fn.now(),
+    });
+  if (!updated) {
+    throw new Error('License not found');
+  }
+
+  return getLicenseDetail(id);
+}
+
+async function extendLicenseExpiry(licenseId, days) {
+  const id = parseInt(licenseId, 10);
+  const extendDays = parseInt(days, 10);
+  if (!Number.isFinite(id) || !Number.isFinite(extendDays) || extendDays <= 0) {
+    throw new Error('Invalid expiry extension');
+  }
+
+  const license = await db('licenses').where({ id }).first();
+  if (!license) {
+    throw new Error('License not found');
+  }
+
+  const now = Date.now();
+  const currentExpiry = license.expires_at ? new Date(license.expires_at).getTime() : 0;
+  const base = currentExpiry > now ? currentExpiry : now;
+  const nextExpiry = new Date(base + extendDays * 24 * 60 * 60 * 1000);
+
+  await db('licenses')
+    .where({ id })
+    .update({
+      expires_at: nextExpiry,
+      updated_at: db.fn.now(),
+    });
+
+  return getLicenseDetail(id);
+}
+
+async function resetLicenseStore(licenseId, boundStoreId) {
+  const id = parseInt(licenseId, 10);
+  const storeId = parseInt(boundStoreId, 10);
+  if (!Number.isFinite(id) || !Number.isFinite(storeId)) {
+    throw new Error('Invalid bound store reset');
+  }
+
+  const deleted = await db('license_stores')
+    .where({ id: storeId, license_id: id })
+    .del();
+  if (!deleted) {
+    throw new Error('Bound store not found');
+  }
+
+  await db('licenses')
+    .where({ id })
+    .update({ updated_at: db.fn.now() });
+
+  return getLicenseDetail(id);
+}
+
+async function resetAllLicenseStores(licenseId) {
+  const id = parseInt(licenseId, 10);
+  if (!Number.isFinite(id)) {
+    throw new Error('Invalid bound store reset');
+  }
+
+  const license = await db('licenses').where({ id }).first();
+  if (!license) {
+    throw new Error('License not found');
+  }
+
+  await db('license_stores')
+    .where({ license_id: id })
+    .del();
+
+  await db('licenses')
+    .where({ id })
+    .update({ updated_at: db.fn.now() });
+
+  return getLicenseDetail(id);
 }
 
 async function createLicense({ customerEmail = '', customerName = '', plan = 'starter', durationDays = 30, notes = '', maxStores = null }) {
@@ -271,4 +543,10 @@ module.exports = {
   verifyLicense,
   createLicense,
   getDefaultStoreLimit,
+  listLicenses,
+  getLicenseDetail,
+  updateLicenseStatus,
+  extendLicenseExpiry,
+  resetLicenseStore,
+  resetAllLicenseStores,
 };

@@ -16,7 +16,7 @@ Recommended:
 - VPS: DigitalOcean / Hetzner
 - Node.js 22 LTS
 - reverse proxy: Nginx
-- process manager: PM2 or systemd
+- process manager: PM2
 - database: Neon PostgreSQL
 
 Required environment:
@@ -37,7 +37,8 @@ Deploy commands:
 cd shopee-saas
 npm install
 npm run migrate
-npm run start
+pm2 start ecosystem.config.cjs --env production
+pm2 save
 ```
 
 Health checks:
@@ -52,6 +53,8 @@ Expose the backend as HTTPS on a real domain, for example:
 - `https://license.yourdomain.com`
 
 Your reverse proxy should forward HTTPS traffic to `http://127.0.0.1:3000`.
+
+An Nginx example is in `docs/nginx-license.conf.example`.
 
 ## 3. Build the customer extension
 
@@ -107,3 +110,10 @@ Before giving it to buyers:
 - activate one license against a real store
 - export one Excel file from the built extension
 - confirm the correct store is bound in the license backend
+- confirm `logs/app.log` and `logs/error.log` are being written on the server
+
+## 7. Recovery basics
+
+- keep a copy of production `.env` outside the server
+- keep Neon credentials and project access in a second admin account
+- verify Neon point-in-time restore or backup options before onboarding buyers

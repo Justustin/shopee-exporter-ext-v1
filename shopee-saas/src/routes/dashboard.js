@@ -40,6 +40,7 @@ router.get('/', async (req, res) => {
     store_not_found: 'Store not found.',
     subscription_required: 'Active subscription required. Renew or upgrade your plan to continue.',
     shopee_disabled: 'Shopee Open Platform is disabled on this server.',
+    admin_required: 'Admin access is required to view that page.',
   };
   const errorCode = req.query.error || null;
 

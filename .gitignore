@@ -3,6 +3,7 @@
 *.xlsx
 node_modules/
 dist/
+logs/
 .env
 .DS_Store
 Thumbs.db

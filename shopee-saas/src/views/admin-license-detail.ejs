@@ -1,0 +1,134 @@
+<% var title = 'Admin - License #' + license.id; %>
+<%- include('_header') %>
+
+<div class="flex-between mb-16">
+  <div>
+    <h2>License #<%= license.id %></h2>
+    <div class="text-muted"><%= license.customerEmail || '-' %> | <%= license.plan %> | <%= license.status %></div>
+  </div>
+  <a href="/admin/licenses" class="btn btn-blue">Back to Licenses</a>
+</div>
+
+<% if (flash) { %>
+  <div class="alert <%= flash.type === 'success' ? 'alert-success' : 'alert-error' %>"><%= flash.message %></div>
+<% } %>
+
+<div class="grid mb-16" style="grid-template-columns: 1.2fr 1fr;">
+  <div class="card">
+    <h3 style="margin-bottom:12px">Details</h3>
+    <table>
+      <tr><td>Status</td><td><strong><%= license.status %></strong></td></tr>
+      <tr><td>Plan</td><td><%= license.plan %></td></tr>
+      <tr><td>Store Limit</td><td><%= license.storeCount %> / <%= license.maxStores %></td></tr>
+      <tr><td>Customer</td><td><%= license.customerName || '-' %></td></tr>
+      <tr><td>Email</td><td><%= license.customerEmail || '-' %></td></tr>
+      <tr><td>Expires</td><td><%= license.expiresAt ? new Date(license.expiresAt).toLocaleString('id-ID') : 'No expiry' %></td></tr>
+      <tr><td>Last Verified</td><td><%= license.lastVerifiedAt ? new Date(license.lastVerifiedAt).toLocaleString('id-ID') : 'Never' %></td></tr>
+      <tr><td>Created</td><td><%= license.createdAt ? new Date(license.createdAt).toLocaleString('id-ID') : '-' %></td></tr>
+      <tr><td>Notes</td><td><%= license.notes || '-' %></td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-bottom:12px">Actions</h3>
+    <div class="grid" style="grid-template-columns: 1fr;">
+      <form method="POST" action="/admin/licenses/<%= license.id %>/<%= license.status === 'active' ? 'revoke' : 'reactivate' %>">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button type="submit" class="btn <%= license.status === 'active' ? 'btn-danger' : 'btn-success' %>" style="width:100%">
+          <%= license.status === 'active' ? 'Revoke License' : 'Reactivate License' %>
+        </button>
+      </form>
+
+      <form method="POST" action="/admin/licenses/<%= license.id %>/extend">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <div class="form-group">
+          <label for="days">Extend expiry by days</label>
+          <input id="days" name="days" type="number" min="1" value="30">
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%">Extend Expiry</button>
+      </form>
+
+      <form method="POST" action="/admin/licenses/<%= license.id %>/reset-stores">
+        <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+        <button type="submit" class="btn btn-danger" style="width:100%">Reset All Bound Stores</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-16">
+  <div class="flex-between mb-16">
+    <h3>Bound Stores</h3>
+    <div class="text-muted"><%= license.boundStores.length %> store(s)</div>
+  </div>
+  <div class="overflow-x">
+    <table>
+      <thead>
+        <tr>
+          <th>Store</th>
+          <th>Store Key</th>
+          <th>First Verified</th>
+          <th>Last Verified</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (license.boundStores.length === 0) { %>
+          <tr><td colspan="5" class="text-muted">No bound stores.</td></tr>
+        <% } %>
+        <% for (const store of license.boundStores) { %>
+          <tr>
+            <td><%= store.storeName || '-' %></td>
+            <td style="font-family:monospace"><%= store.storeKey %></td>
+            <td><%= store.firstVerifiedAt ? new Date(store.firstVerifiedAt).toLocaleString('id-ID') : '-' %></td>
+            <td><%= store.lastVerifiedAt ? new Date(store.lastVerifiedAt).toLocaleString('id-ID') : '-' %></td>
+            <td class="text-right">
+              <form method="POST" action="/admin/licenses/<%= license.id %>/reset-store/<%= store.id %>">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>">
+                <button type="submit" class="btn btn-danger">Remove</button>
+              </form>
+            </td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="flex-between mb-16">
+    <h3>Verification History</h3>
+    <div class="text-muted"><%= verifications.length %> event(s)</div>
+  </div>
+  <div class="overflow-x">
+    <table>
+      <thead>
+        <tr>
+          <th>When</th>
+          <th>Result</th>
+          <th>Store</th>
+          <th>Build</th>
+          <th>Profile Email</th>
+          <th>Error</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% if (verifications.length === 0) { %>
+          <tr><td colspan="6" class="text-muted">No verification history.</td></tr>
+        <% } %>
+        <% for (const entry of verifications) { %>
+          <tr>
+            <td><%= entry.createdAt ? new Date(entry.createdAt).toLocaleString('id-ID') : '-' %></td>
+            <td><%= entry.resultCode %><%= entry.success ? ' (ok)' : '' %></td>
+            <td><%= entry.storeName || entry.storeKey || '-' %></td>
+            <td><%= entry.buildTag || '-' %></td>
+            <td><%= entry.profileEmail || '-' %></td>
+            <td><%= entry.errorMessage || '-' %></td>
+          </tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('_footer') %>

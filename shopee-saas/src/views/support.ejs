@@ -1,0 +1,16 @@
+<% var title = 'Support'; %>
+<%- include('_header') %>
+
+<div class="card">
+  <h2 style="margin-bottom:12px">Support</h2>
+  <p style="margin-bottom:12px">For activation, licensing, or export issues, use one of the support channels below.</p>
+  <ul style="padding-left:18px;line-height:1.8">
+    <li>Email: <a href="mailto:<%= supportEmail %>"><%= supportEmail %></a></li>
+    <% if (supportWhatsapp) { %>
+      <li>WhatsApp: <%= supportWhatsapp %></li>
+    <% } %>
+  </ul>
+  <p style="margin-top:16px">When reporting an issue, include your store name, license email, and a screenshot of the popup or error page.</p>
+</div>
+
+<%- include('_footer') %>
