@@ -2003,7 +2003,7 @@ function extractFeeFieldsFromEntity(entity) {
   return result;
 }
 
-function hasExplicitShopeeVoucherDetail(entity) {
+function hasExplicitVoucherDetail(entity, voucherType) {
   let found = false;
   const seen = new Set();
 
@@ -2043,7 +2043,12 @@ function hasExplicitShopeeVoucherDetail(entity) {
           text.includes('voucher_from_seller');
         const isParent = Array.isArray(node.sub_breakdown) && node.sub_breakdown.length > 0;
 
-        if (looksShopeeVoucher && !looksSellerVoucher && !isParent) {
+        const matchesVoucher =
+          voucherType === 'seller'
+            ? looksSellerVoucher
+            : (looksShopeeVoucher && !looksSellerVoucher);
+
+        if (matchesVoucher && !isParent) {
           const amount = extractNumericFromUnknown(
             firstPresent(
               node.amount,
@@ -2079,15 +2084,25 @@ function hasExplicitShopeeVoucherDetail(entity) {
   return found;
 }
 
+function hasExplicitShopeeVoucherDetail(entity) {
+  return hasExplicitVoucherDetail(entity, 'shopee');
+}
+
+function hasExplicitSellerVoucherDetail(entity) {
+  return hasExplicitVoucherDetail(entity, 'seller');
+}
+
 function applyVoucherGuard(order) {
   if (!order || typeof order !== 'object') return;
-  if (order._has_explicit_shopee_voucher) return;
 
   // If we already parsed order_income_components and found no explicit Shopee voucher row,
-  // always force Shopee voucher to zero to match invoice UI.
+  // always force voucher values to match the visible invoice rows.
   if (order._components_voucher_checked) {
-    if ((toNumberOrNull(order.voucher_from_shopee) || 0) !== 0) {
+    if (!order._has_explicit_shopee_voucher && (toNumberOrNull(order.voucher_from_shopee) || 0) !== 0) {
       order.voucher_from_shopee = 0;
+    }
+    if (!order._has_explicit_seller_voucher && (toNumberOrNull(order.voucher_from_seller) || 0) !== 0) {
+      order.voucher_from_seller = 0;
     }
     return;
   }
@@ -2656,6 +2671,7 @@ function processOrderIncomeComponents(body) {
   const hasSellerBreakdown = Array.isArray(data?.seller_income_breakdown?.breakdown)
     && data.seller_income_breakdown.breakdown.length > 0;
   capturedOrders[orderId]._has_explicit_shopee_voucher = hasExplicitShopeeVoucherDetail(data);
+  capturedOrders[orderId]._has_explicit_seller_voucher = hasExplicitSellerVoucherDetail(data);
   capturedOrders[orderId]._components_voucher_checked = true;
 
   const voucherOverrides = extractVoucherFieldsFromSellerIncomeBreakdown(data);
@@ -2664,9 +2680,13 @@ function processOrderIncomeComponents(body) {
     if (voucherOverrides.voucher_from_shopee === undefined) {
       capturedOrders[orderId].voucher_from_shopee = 0;
     }
+  } else if (!capturedOrders[orderId]._has_explicit_seller_voucher) {
+    capturedOrders[orderId].voucher_from_seller = 0;
   }
   if (voucherOverrides.voucher_from_shopee !== undefined) {
     capturedOrders[orderId].voucher_from_shopee = voucherOverrides.voucher_from_shopee;
+  } else if (!capturedOrders[orderId]._has_explicit_shopee_voucher) {
+    capturedOrders[orderId].voucher_from_shopee = 0;
   }
 
   const shippingOverrides = extractShippingFieldsFromSellerIncomeBreakdown(data);
@@ -2694,6 +2714,8 @@ function processOrderIncomeComponents(body) {
     };
     if (voucherOverrides.voucher_from_seller !== undefined) {
       componentBreakdown.voucher_from_seller = voucherOverrides.voucher_from_seller;
+    } else if (!capturedOrders[orderId]._has_explicit_seller_voucher) {
+      componentBreakdown.voucher_from_seller = 0;
     }
     if (voucherOverrides.voucher_from_shopee !== undefined) {
       componentBreakdown.voucher_from_shopee = voucherOverrides.voucher_from_shopee;
@@ -3547,7 +3569,10 @@ function buildProductQuantitySummary(orders) {
       const orderedQty = toNumberOrNull(item.quantity) || 0;
       const refundedQty = Math.max(toNumberOrNull(item.refund_qty) || 0, 0);
       const soldQty = Math.max(orderedQty - refundedQty, 0);
-      const salesSubtotal = toNumberOrNull(item.subtotal) || 0;
+      const orderedSubtotal = toNumberOrNull(item.subtotal) || 0;
+      const salesSubtotal = orderedQty > 0
+        ? Math.round((orderedSubtotal * soldQty) / orderedQty)
+        : orderedSubtotal;
       const key = `${name}\u0000${sku}`;
 
       if (!productMap.has(key)) {
